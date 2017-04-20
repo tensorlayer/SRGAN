@@ -1,0 +1,7 @@
+*.pyc
+.DS_Store
+*.npz
+sample/
+samples/
+checkpoint/
+__pycache__/
