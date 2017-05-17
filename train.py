@@ -99,6 +99,9 @@ def train():
         tl.files.load_and_assign_npz(sess=sess, name=checkpoint_dir+'/g_{}.npz'.format(tl.global_flag['model']), network=net_g)
         tl.files.load_and_assign_npz(sess=sess, name=checkpoint_dir+'/d_{}.npz'.format(tl.global_flag['model']), network=net_d)
 
+        if not os.path.isfile("vgg16_weights.npz"):
+            print("Please download vgg16_weights.npz from : http://www.cs.toronto.edu/~frossard/post/vgg16/")
+            exit()
         npz = np.load('vgg16_weights.npz')
         assign_op = []
         for idx, val in enumerate(sorted(npz.items())[0:len(vgg_target_emb.all_params)]):
@@ -118,7 +121,7 @@ def train():
 
         img_list = img_list[batch_size:]
 
-        n_epoch_init = 1
+        n_epoch_init = 20
 
         for epoch in range(0, n_epoch):
             if epoch !=0 and (epoch % decay_every == 0):
@@ -179,7 +182,9 @@ def train():
             if (epoch != 0) and (epoch % 5 == 0):
                 tl.files.save_npz(net_g.all_params, name=checkpoint_dir+'/g_{}.npz'.format(tl.global_flag['model']), sess=sess)
                 tl.files.save_npz(net_d.all_params, name=checkpoint_dir+'/d_{}.npz'.format(tl.global_flag['model']), sess=sess)
-
+                if epoch == (n_epoch_init - 1):
+                    tl.files.save_npz(net_g.all_params, name=checkpoint_dir+'/g_{}_init.npz'.format(tl.global_flag['model']), sess=sess)
+                    tl.files.save_npz(net_d.all_params, name=checkpoint_dir+'/d_{}_init.npz'.format(tl.global_flag['model']), sess=sess)
 
 
 
