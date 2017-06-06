@@ -12,7 +12,13 @@ config.TRAIN.lr_decay = 0.5
 config.TRAIN.decay_every = 100
 config.TRAIN.n_epoch = 400      # 10^5 update iterations
 
-config.TRAIN.img_path = '/media/gyang/RAIDARRAY/Data/SuperResolutionDatasets/DIV2K_train_HR/'
+config.TRAIN.hr_img_path = 'data2017/DIV2K_train_HR/'
+config.TRAIN.lr_img_path = 'data2017/DIV2K_train_LR_bicubic/X4/'
+
+config.VALID = edict()
+
+config.VALID.hr_img_path = 'data2017/DIV2K_valid_HR/'
+config.VALID.lr_img_path = 'data2017/DIV2K_valid_LR_bicubic/X4/'
 
 def log_config(filename, cfg):
     with open(filename, 'w') as f:

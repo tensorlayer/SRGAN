@@ -15,7 +15,7 @@ import numpy as np
 from six.moves import xrange
 import random, warnings
 import copy
-
+import inspect
 # __all__ = [
 #     "Layer",
 #     "DenseLayer",
@@ -903,6 +903,8 @@ class DropoutLayer(Layer):
         Default False, if True, the keeping probability is fixed and cannot be changed via feed_dict.
     is_train : boolean
         If False, skip this layer, default is True.
+    seed : int or None
+        An integer or None to create random seed.
     name : a string or None
         An optional name to attach to this layer.
 
@@ -939,6 +941,7 @@ class DropoutLayer(Layer):
         keep = 0.5,
         is_fix = False,
         is_train = True,
+        seed = None,
         name = 'dropout_layer',
     ):
         Layer.__init__(self, name=name)
@@ -955,10 +958,10 @@ class DropoutLayer(Layer):
             # The name of placeholder for keep_prob is the same with the name
             # of the Layer.
             if is_fix:
-                self.outputs = tf.nn.dropout(self.inputs, keep, name=name)
+                self.outputs = tf.nn.dropout(self.inputs, keep, seed=seed, name=name)
             else:
                 set_keep[name] = tf.placeholder(tf.float32)
-                self.outputs = tf.nn.dropout(self.inputs, set_keep[name], name=name) # 1.2
+                self.outputs = tf.nn.dropout(self.inputs, set_keep[name], seed=seed, name=name) # 1.2
 
             self.all_layers = list(layer.all_layers)
             self.all_params = list(layer.all_params)
@@ -997,6 +1000,8 @@ class GaussianNoiseLayer(Layer):
     stddev : float
     is_train : boolean
         If False, skip this layer, default is True.
+    seed : int or None
+        An integer or None to create random seed.
     name : a string or None
         An optional name to attach to this layer.
     """
@@ -1006,6 +1011,7 @@ class GaussianNoiseLayer(Layer):
         mean = 0.0,
         stddev = 1.0,
         is_train = True,
+        seed = None,
         name = 'gaussian_noise_layer',
     ):
         Layer.__init__(self, name=name)
@@ -1020,7 +1026,7 @@ class GaussianNoiseLayer(Layer):
             print("  [TL] GaussianNoiseLayer %s: mean:%f stddev:%f" % (self.name, mean, stddev))
             with tf.variable_scope(name) as vs:
                 # noise = np.random.normal(0.0 , sigma , tf.to_int64(self.inputs).get_shape())
-                noise = tf.random_normal(shape = self.inputs.get_shape(), mean=mean, stddev=stddev)
+                noise = tf.random_normal(shape = self.inputs.get_shape(), mean=mean, stddev=stddev, seed=seed)
                 self.outputs = self.inputs + noise
             self.all_layers = list(layer.all_layers)
             self.all_params = list(layer.all_params)
@@ -2032,7 +2038,7 @@ def MeanPool3d(net, filter_size, strides, padding='valid', data_format='channels
     data_format : A string. The ordering of the dimensions in the inputs. channels_last (default) and channels_first are supported. channels_last corresponds to inputs with shape (batch, depth, height, width, channels) while channels_first corresponds to inputs with shape (batch, channels, depth, height, width).
     name : A string, the name of the layer.
     """
-    print("  [TL] MeanPool3d %s: filter_size:%s strides:%s padding:%s name:%s" %
+    print("  [TL] MeanPool3d %s: filter_size:%s strides:%s padding:%s" %
                         (name, str(filter_size), str(strides), str(padding)))
     outputs = tf.layers.average_pooling3d(net.outputs, filter_size, strides, padding=padding, data_format=data_format, name=name)
 
@@ -2147,7 +2153,7 @@ def SubpixelConv2d(net, scale=2, n_out_channel=None, act=tf.identity, name='subp
 
 # ## Normalization layer
 class LocalResponseNormLayer(Layer):
-    """The :class:`LocalResponseNormLayer` class is for Local Response Normalization, see ``tf.nn.local_response_normalization``.
+    """The :class:`LocalResponseNormLayer` class is for Local Response Normalization, see ``tf.nn.local_response_normalization`` or ``tf.nn.lrn`` for new TF version.
     The 4-D input tensor is treated as a 3-D array of 1-D vectors (along the last dimension), and each vector is normalized independently.
     Within a given vector, each component is divided by the weighted, squared sum of inputs within depth_radius.
 
@@ -2169,11 +2175,12 @@ class LocalResponseNormLayer(Layer):
         beta = None,
         name ='lrn_layer',
     ):
+        Layer.__init__(self, name=name)
         self.inputs = layer.outputs
         print("  [TL] LocalResponseNormLayer %s: depth_radius: %d, bias: %f, alpha: %f, beta: %f" %
                             (self.name, depth_radius, bias, alpha, beta))
         with tf.variable_scope(name) as vs:
-            self.outputs = tf.nn.local_response_normalization(self.inputs, depth_radius=depth_radius, bias=bias, alpha=alpha, beta=beta)
+            self.outputs = tf.nn.lrn(self.inputs, depth_radius=depth_radius, bias=bias, alpha=alpha, beta=beta)
 
         self.all_layers = list(layer.all_layers)
         self.all_params = list(layer.all_params)
@@ -3088,7 +3095,7 @@ class PadLayer(Layer):
         Layer.__init__(self, name=name)
         assert paddings is not None, "paddings should be a Tensor of type int32. see https://www.tensorflow.org/api_docs/python/tf/pad"
         self.inputs = layer.outputs
-        print("  [TL] PoolLayer   %s: paddings:%s mode:%s" %
+        print("  [TL] PadLayer   %s: paddings:%s mode:%s" %
                             (self.name, list(paddings.get_shape()), mode))
 
         self.outputs = tf.pad(self.inputs, paddings=paddings, mode=mode, name=name)
@@ -3390,7 +3397,10 @@ class RNNLayer(Layer):
         #           for input_ in tf.split(1, num_steps, inputs)]
         # outputs, state = rnn.rnn(cell, inputs, initial_state=self._initial_state)
         outputs = []
-        self.cell = cell = cell_fn(num_units=n_hidden, **cell_init_args)
+        if 'reuse' in inspect.getargspec(cell_fn.__init__).args:
+            self.cell = cell = cell_fn(num_units=n_hidden, reuse=tf.get_variable_scope().reuse, **cell_init_args)
+        else:
+            self.cell = cell = cell_fn(num_units=n_hidden, **cell_init_args)
         if initial_state is None:
             self.initial_state = cell.zero_state(batch_size, dtype=tf.float32)  # 1.2.3
         state = self.initial_state
@@ -3553,8 +3563,7 @@ class BiRNNLayer(Layer):
             raise Exception("RNN : Input dimension should be rank 3 : [batch_size, n_steps, n_features]")
 
         with tf.variable_scope(name, initializer=initializer) as vs:
-            self.fw_cell = cell_fn(num_units=n_hidden, **cell_init_args)
-            self.bw_cell = cell_fn(num_units=n_hidden, **cell_init_args)
+            rnn_creator = lambda: cell_fn(num_units=n_hidden, **cell_init_args)
             # Apply dropout
             if dropout:
                 if type(dropout) in [tuple, list]:
@@ -3569,14 +3578,14 @@ class BiRNNLayer(Layer):
                     DropoutWrapper_fn = tf.contrib.rnn.DropoutWrapper
                 except:
                     DropoutWrapper_fn = tf.nn.rnn_cell.DropoutWrapper
-                self.fw_cell = DropoutWrapper_fn(
-                          self.fw_cell,
-                          input_keep_prob=in_keep_prob,
-                          output_keep_prob=out_keep_prob)
-                self.bw_cell = DropoutWrapper_fn(
-                          self.bw_cell,
-                          input_keep_prob=in_keep_prob,
-                          output_keep_prob=out_keep_prob)
+                cell_creator = lambda: DropoutWrapper_fn(rnn_creator(),
+                                                         input_keep_prob=in_keep_prob,
+                                                         output_keep_prob=1.0)  # out_keep_prob)
+            else:
+                cell_creator = rnn_creator
+            self.fw_cell = cell_creator()
+            self.bw_cell = cell_creator()
+
             # Apply multiple layers
             if n_layer > 1:
                 try: # TF1.0
@@ -3585,13 +3594,11 @@ class BiRNNLayer(Layer):
                     MultiRNNCell_fn = tf.nn.rnn_cell.MultiRNNCell
 
                 try:
-                    self.fw_cell = MultiRNNCell_fn([self.fw_cell] * n_layer,
-                                                          state_is_tuple=True)
-                    self.bw_cell = MultiRNNCell_fn([self.bw_cell] * n_layer,
-                                                          state_is_tuple=True)
+                    self.fw_cell = MultiRNNCell_fn([cell_creator() for _ in range(n_layer)], state_is_tuple=True)
+                    self.bw_cell = MultiRNNCell_fn([cell_creator() for _ in range(n_layer)], state_is_tuple=True)
                 except:
-                    self.fw_cell = MultiRNNCell_fn([self.fw_cell] * n_layer)
-                    self.bw_cell = MultiRNNCell_fn([self.bw_cell] * n_layer)
+                    self.fw_cell = MultiRNNCell_fn([cell_creator() for _ in range(n_layer)])
+                    self.bw_cell = MultiRNNCell_fn([cell_creator() for _ in range(n_layer)])
 
             # Initial state of RNN
             if fw_initial_state is None:
@@ -3768,7 +3775,7 @@ def retrieve_seq_length_op2(data):
     return tf.reduce_sum(tf.cast(tf.greater(data, tf.zeros_like(data)), tf.int32), 1)
 
 
-def retrieve_seq_length_op3(data, pad_val=0):
+def retrieve_seq_length_op3(data, pad_val=0): # HangSheng: return tensor for sequence length, if input is tf.string
     data_shape_size = data.get_shape().ndims
     if data_shape_size == 3:
         return tf.reduce_sum(tf.cast(tf.reduce_any(tf.not_equal(data, pad_val), axis=2), dtype=tf.int32), 1)
@@ -3780,7 +3787,7 @@ def retrieve_seq_length_op3(data, pad_val=0):
         raise ValueError("retrieve_seq_length_op3: handling data_shape_size %s hasn't been implemented!" % (data_shape_size))
 
 
-def target_mask_op(data, pad_val=0):
+def target_mask_op(data, pad_val=0):        # HangSheng: return tensor for mask,if input is tf.string
     data_shape_size = data.get_shape().ndims
     if data_shape_size == 3:
         return tf.cast(tf.reduce_any(tf.not_equal(data, pad_val), axis=2), dtype=tf.int32)
@@ -3931,7 +3938,7 @@ class DynamicRNNLayer(Layer):
 
         # Creats the cell function
         # cell_instance_fn=lambda: cell_fn(num_units=n_hidden, **cell_init_args) # HanSheng
-        self.cell = cell_fn(num_units=n_hidden, **cell_init_args)
+        rnn_creator = lambda: cell_fn(num_units=n_hidden, **cell_init_args)
 
         # Apply dropout
         if dropout:
@@ -3953,9 +3960,11 @@ class DynamicRNNLayer(Layer):
             #                     cell_instance_fn1(),
             #                     input_keep_prob=in_keep_prob,
             #                     output_keep_prob=out_keep_prob)
-            self.cell = DropoutWrapper_fn(self.cell,
+            cell_creator = lambda: DropoutWrapper_fn(rnn_creator(),
                       input_keep_prob=in_keep_prob, output_keep_prob=1.0)#out_keep_prob)
-
+        else:
+            cell_creator = rnn_creator
+        self.cell = cell_creator()
         # Apply multiple layers
         if n_layer > 1:
             try:
@@ -3966,10 +3975,10 @@ class DynamicRNNLayer(Layer):
             # cell_instance_fn2=cell_instance_fn # HanSheng
             try:
                 # cell_instance_fn=lambda: MultiRNNCell_fn([cell_instance_fn2() for _ in range(n_layer)], state_is_tuple=True) # HanSheng
-                self.cell = MultiRNNCell_fn([self.cell] * n_layer, state_is_tuple=True)
+                self.cell = MultiRNNCell_fn([cell_creator() for _ in range(n_layer)], state_is_tuple=True)
             except: # when GRU
                 # cell_instance_fn=lambda: MultiRNNCell_fn([cell_instance_fn2() for _ in range(n_layer)]) # HanSheng
-                self.cell = MultiRNNCell_fn([self.cell] * n_layer)
+                self.cell = MultiRNNCell_fn([cell_creator() for _ in range(n_layer)])
 
         if dropout:
             self.cell = DropoutWrapper_fn(self.cell,
@@ -4172,8 +4181,7 @@ class BiDynamicRNNLayer(Layer):
         with tf.variable_scope(name, initializer=initializer) as vs:
             # Creats the cell function
             # cell_instance_fn=lambda: cell_fn(num_units=n_hidden, **cell_init_args) # HanSheng
-            self.fw_cell = cell_fn(num_units=n_hidden, **cell_init_args)
-            self.bw_cell = cell_fn(num_units=n_hidden, **cell_init_args)
+            rnn_creator = lambda: cell_fn(num_units=n_hidden, **cell_init_args)
 
             # Apply dropout
             if dropout:
@@ -4195,15 +4203,13 @@ class BiDynamicRNNLayer(Layer):
                     #                     cell_instance_fn1(),
                     #                     input_keep_prob=in_keep_prob,
                     #                     output_keep_prob=out_keep_prob)
-
-                self.fw_cell = DropoutWrapper_fn(
-                    self.fw_cell,
-                    input_keep_prob=in_keep_prob,
-                    output_keep_prob=out_keep_prob)
-                self.bw_cell = DropoutWrapper_fn(
-                    self.bw_cell,
-                    input_keep_prob=in_keep_prob,
-                    output_keep_prob=out_keep_prob)
+                cell_creator = lambda: DropoutWrapper_fn(rnn_creator(),
+                                                         input_keep_prob=in_keep_prob,
+                                                         output_keep_prob=1.0)  # out_keep_prob)
+            else:
+                cell_creator = rnn_creator
+            self.fw_cell = cell_creator()
+            self.bw_cell = cell_creator()
             # Apply multiple layers
             if n_layer > 1:
                 try:
@@ -4213,8 +4219,8 @@ class BiDynamicRNNLayer(Layer):
 
                 # cell_instance_fn2=cell_instance_fn            # HanSheng
                 # cell_instance_fn=lambda: MultiRNNCell_fn([cell_instance_fn2() for _ in range(n_layer)])
-                self.fw_cell = MultiRNNCell_fn([self.fw_cell] * n_layer)
-                self.bw_cell = MultiRNNCell_fn([self.bw_cell] * n_layer)
+                self.fw_cell = MultiRNNCell_fn([cell_creator() for _ in range(n_layer)])
+                self.bw_cell = MultiRNNCell_fn([cell_creator() for _ in range(n_layer)])
             # self.fw_cell=cell_instance_fn()
             # self.bw_cell=cell_instance_fn()
             # Initial state of RNN
@@ -5249,17 +5255,17 @@ class EmbeddingAttentionSeq2seqWrapper(Layer):
         # ============ Seq Encode Layer =============
         # Create the internal multi-layer cell for our RNN.
         try: # TF1.0
-          single_cell = tf.contrib.rnn.GRUCell(size)
+          cell_creator = lambda: tf.contrib.rnn.GRUCell(size)
         except:
-          single_cell = tf.nn.rnn_cell.GRUCell(size)
+          cell_creator = lambda: tf.nn.rnn_cell.GRUCell(size)
 
         if use_lstm:
           try: # TF1.0
-            single_cell = tf.contrib.rnn.BasicLSTMCell(size)
+            cell_creator = lambda: tf.contrib.rnn.BasicLSTMCell(size)
           except:
-            single_cell = tf.nn.rnn_cell.BasicLSTMCell(size)
+            cell_creator = lambda: tf.nn.rnn_cell.BasicLSTMCell(size)
 
-        cell = single_cell
+        cell = cell_creator()
         if num_layers > 1:
           try: # TF1.0
             cell = tf.contrib.rnn.MultiRNNCell([single_cell] * num_layers)
