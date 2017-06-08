@@ -12,6 +12,12 @@ import os
 
 ## Save images
 import scipy.misc
+
+def save_image(image, image_path):
+    """Save one image.
+    """
+    scipy.misc.imsave(image_path, image)
+
 def save_images(images, size, image_path):
     """Save mutiple images into one single image.
 

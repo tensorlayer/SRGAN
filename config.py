@@ -4,19 +4,30 @@ import json
 config = edict()
 config.TRAIN = edict()
 
-# Photo-Realistic Single Image Super-Resolution Using a Generative Adversarial Network
+## Adam
 config.TRAIN.batch_size = 16
-config.TRAIN.lr_init = 0.0001
+config.TRAIN.lr_init = 0.0001 # i.e. 1e-4
 config.TRAIN.beta1 = 0.9
-config.TRAIN.lr_decay = 0.5
-config.TRAIN.decay_every = 100
-config.TRAIN.n_epoch = 400      # 10^5 update iterations
 
+
+## adversarial learning
+config.TRAIN.n_epoch = 1000
+# config.TRAIN.lr_decay = 0.5
+# config.TRAIN.decay_every = 100
+
+
+## initialize G
+config.TRAIN.n_epoch_init = 1000
+config.TRAIN.lr_decay_init = 0.1
+config.TRAIN.decay_every_init = int(config.TRAIN.n_epoch_init / 2)
+
+
+## train set location
 config.TRAIN.hr_img_path = 'data2017/DIV2K_train_HR/'
 config.TRAIN.lr_img_path = 'data2017/DIV2K_train_LR_bicubic/X4/'
 
 config.VALID = edict()
-
+## test set location
 config.VALID.hr_img_path = 'data2017/DIV2K_valid_HR/'
 config.VALID.lr_img_path = 'data2017/DIV2K_valid_LR_bicubic/X4/'
 
