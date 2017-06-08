@@ -20,6 +20,7 @@ def SRGAN_g(t_image, is_train=False, reuse=False):
     feature maps (n) and stride (s) feature maps (n) and stride (s)
     """
     w_init = tf.random_normal_initializer(stddev=0.02)
+    b_init = None # tf.constant_initializer(value=0.0)
     g_init = tf.random_normal_initializer(1., 0.02)
     with tf.variable_scope("SRGAN_g", reuse=reuse) as vs:
         tl.layers.set_name_reuse(reuse)
@@ -29,14 +30,14 @@ def SRGAN_g(t_image, is_train=False, reuse=False):
 
         # B residual blocks
         for i in range(16):
-            nn = Conv2d(n, 64, (3, 3), (1, 1), act=None, padding='SAME', W_init=w_init, name='n64s1/c1/%s' % i)
+            nn = Conv2d(n, 64, (3, 3), (1, 1), act=None, padding='SAME', W_init=w_init, b_init=b_init, name='n64s1/c1/%s' % i)
             nn = BatchNormLayer(nn, act=tf.nn.relu, is_train=is_train, gamma_init=g_init, name='n64s1/b1/%s' % i)
-            nn = Conv2d(nn, 64, (3, 3), (1, 1), act=None, padding='SAME', W_init=w_init, name='n64s1/c2/%s' % i)
+            nn = Conv2d(nn, 64, (3, 3), (1, 1), act=None, padding='SAME', W_init=w_init, b_init=b_init, name='n64s1/c2/%s' % i)
             nn = BatchNormLayer(nn, is_train=is_train, gamma_init=g_init, name='n64s1/b2/%s' % i)
             nn = ElementwiseLayer([n, nn], tf.add, 'b_residual_add/%s' % i)
             n = nn
 
-        n = Conv2d(n, 64, (3, 3), (1, 1), act=None, padding='SAME', W_init=w_init, name='n64s1/c/m')
+        n = Conv2d(n, 64, (3, 3), (1, 1), act=None, padding='SAME', W_init=w_init, b_init=b_init, name='n64s1/c/m')
         n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n64s1/b/m')
         n = ElementwiseLayer([n, temp], tf.add, 'add3')
         # B residual blacks end
@@ -55,6 +56,7 @@ def SRGAN_d(t_image, is_train=False, reuse=False):
     feature maps (n) and stride (s) feature maps (n) and stride (s)
     """
     w_init = tf.random_normal_initializer(stddev=0.02)
+    b_init = None
     g_init = tf.random_normal_initializer(1., 0.02)
     lrelu = lambda x : tl.act.lrelu(x, 0.2)
     with tf.variable_scope("SRGAN_d", reuse=reuse) as vs:
@@ -62,25 +64,25 @@ def SRGAN_d(t_image, is_train=False, reuse=False):
         n = InputLayer(t_image, name='in')
         n = Conv2d(n, 64, (3, 3), (1, 1), act=lrelu, padding='SAME', W_init=w_init, name='n64s1/c')
 
-        n = Conv2d(n, 64, (3, 3), (2, 2), act=lrelu, padding='SAME', W_init=w_init, name='n64s2/c')
+        n = Conv2d(n, 64, (3, 3), (2, 2), act=lrelu, padding='SAME', W_init=w_init, b_init=b_init, name='n64s2/c')
         n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n64s2/b')
 
-        n = Conv2d(n, 128, (3, 3), (1, 1), act=lrelu, padding='SAME', W_init=w_init, name='n128s1/c')
+        n = Conv2d(n, 128, (3, 3), (1, 1), act=lrelu, padding='SAME', W_init=w_init, b_init=b_init, name='n128s1/c')
         n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n128s1/b')
 
-        n = Conv2d(n, 128, (3, 3), (2, 2), act=lrelu, padding='SAME', W_init=w_init, name='n128s2/c')
+        n = Conv2d(n, 128, (3, 3), (2, 2), act=lrelu, padding='SAME', W_init=w_init, b_init=b_init, name='n128s2/c')
         n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n128s2/b')
 
-        n = Conv2d(n, 256, (3, 3), (1, 1), act=lrelu, padding='SAME', W_init=w_init, name='n256s1/c')
+        n = Conv2d(n, 256, (3, 3), (1, 1), act=lrelu, padding='SAME', W_init=w_init, b_init=b_init, name='n256s1/c')
         n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n256s1/b')
 
-        n = Conv2d(n, 256, (3, 3), (2, 2), act=lrelu, padding='SAME', W_init=w_init, name='n256s2/c')
+        n = Conv2d(n, 256, (3, 3), (2, 2), act=lrelu, padding='SAME', W_init=w_init, b_init=b_init, name='n256s2/c')
         n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n256s2/b')
 
-        n = Conv2d(n, 512, (3, 3), (1, 1), act=lrelu, padding='SAME', W_init=w_init, name='n512s1/c')
+        n = Conv2d(n, 512, (3, 3), (1, 1), act=lrelu, padding='SAME', W_init=w_init, b_init=b_init, name='n512s1/c')
         n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n512s1/b')
 
-        n = Conv2d(n, 512, (3, 3), (2, 2), act=lrelu, padding='SAME', W_init=w_init, name='n512s2/c')
+        n = Conv2d(n, 512, (3, 3), (2, 2), act=lrelu, padding='SAME', W_init=w_init, b_init=b_init, name='n512s2/c')
         n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n512s2/b')
 
         n = FlattenLayer(n, name='f')
@@ -92,20 +94,17 @@ def SRGAN_d(t_image, is_train=False, reuse=False):
 
         return n, logits
 
-
 def SRGAN_d2(input_images, is_train=True, reuse=False):
     w_init = tf.random_normal_initializer(stddev=0.02)
     b_init = None # tf.constant_initializer(value=0.0)
     gamma_init=tf.random_normal_initializer(1., 0.02)
     df_dim = 64
-
     with tf.variable_scope("SRGAN_d2", reuse=reuse):
         tl.layers.set_name_reuse(reuse)
-
         net_in = InputLayer(input_images, name='d_input/images')
-
         net_h0 = Conv2d(net_in, df_dim, (4, 4), (2, 2), act=lambda x: tl.act.lrelu(x, 0.2),
                 padding='SAME', W_init=w_init, name='d_h0/conv2d')
+
         net_h1 = Conv2d(net_h0, df_dim*2, (4, 4), (2, 2), act=None,
                 padding='SAME', W_init=w_init, b_init=b_init, name='d_h1/conv2d')
         net_h1 = BatchNormLayer(net_h1, act=lambda x: tl.act.lrelu(x, 0.2),
@@ -157,8 +156,6 @@ def SRGAN_d2(input_images, is_train=True, reuse=False):
         net_ho.outputs = tf.nn.sigmoid(net_ho.outputs)
 
     return net_ho, logits
-
-
 
 def Vgg19_simple_api(rgb, reuse):
     """
@@ -234,7 +231,7 @@ def Vgg19_simple_api(rgb, reuse):
                     strides=(1, 1), act=tf.nn.relu,padding='SAME', name='conv4_4')
         network = MaxPool2d(network, filter_size=(2, 2), strides=(2, 2),
                     padding='SAME', name='pool4')                               # (batch_size, 14, 14, 512)
-        conv4 = network
+        conv = network
         """ conv5 """
         network = Conv2d(network, n_filter=512, filter_size=(3, 3),
                     strides=(1, 1), act=tf.nn.relu,padding='SAME', name='conv5_1')
@@ -252,9 +249,8 @@ def Vgg19_simple_api(rgb, reuse):
         network = DenseLayer(network, n_units=4096, act=tf.nn.relu, name='fc7')
         network = DenseLayer(network, n_units=1000, act=tf.identity, name='fc8')
         print("build model finished: %fs" % (time.time() - start_time))
-        return network, conv4
+        return network, conv
 
-#
 # def vgg16_cnn_emb(t_image, reuse=False):
 #     """ t_image = 244x244 [0~255] """
 #     with tf.variable_scope("vgg16_cnn", reuse=reuse) as vs:

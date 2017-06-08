@@ -38,6 +38,25 @@ def read_all_imgs(img_list, path='', n_threads=32):
         print('read %d from %s' % (len(imgs), path))
     return imgs
 
+def normalize_mean_squared_error(output, target):
+    """Return the TensorFlow expression of normalized mean-squre-error of two distributions.
+
+    Parameters
+    ----------
+    output : 2D or 4D tensor.
+    target : 2D or 4D tensor.
+    """
+    with tf.name_scope("mean_squared_error_loss"):
+        if output.get_shape().ndims == 2:   # [batch_size, n_feature]
+            nmse_a = tf.sqrt(tf.reduce_sum(tf.squared_difference(output, target), axis=1))
+            nmse_b = tf.sqrt(tf.reduce_sum(tf.square(target), axis=1))
+        elif output.get_shape().ndims == 4: # [batch_size, w, h, c]
+            nmse_a = tf.sqrt(tf.reduce_sum(tf.squared_difference(output, target), axis=[1,2,3]))
+            nmse_b = tf.sqrt(tf.reduce_sum(tf.square(target), axis=[1,2,3]))
+        nmse = tf.reduce_mean(nmse_a / nmse_b)
+    return nmse
+
+
 def train():
     ## create folders to save result images and trained model
     save_dir = "samples/{}".format(tl.global_flag['mode'])
@@ -95,11 +114,21 @@ def train():
     d_loss2 = tl.cost.sigmoid_cross_entropy(logits_fake, tf.zeros_like(logits_fake), name='d2')
     d_loss = d_loss1 + d_loss2
 
-    g_gan_loss = tl.cost.sigmoid_cross_entropy(logits_fake, tf.ones_like(logits_fake), name='g')
-    pixel_mse = tl.cost.mean_squared_error(net_g.outputs, t_target_image, is_mean=True)
-    vgg_mse = tl.cost.mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs, is_mean=True) # perceptual loss
-    g_loss = (pixel_mse + vgg_mse) + 1e-3 * g_gan_loss
-    # g_loss = pixel_mse + 1e-3 * g_gan_loss
+    g_gan_loss = 1e-2 * tl.cost.sigmoid_cross_entropy(logits_fake, tf.ones_like(logits_fake), name='g')
+    # mse_loss = tl.cost.mean_squared_error(net_g.outputs, t_target_image, is_mean=True)
+    # vgg_loss = tl.cost.mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs, is_mean=True)
+    mse_loss = normalize_mean_squared_error(net_g.outputs, t_target_image)
+    vgg_loss = 1e-2 * normalize_mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs)
+
+    ## We formulate the perceptual loss as the weighted sum of a content loss
+    ## and an adversarial loss component l_{Gen}^{SR}.
+    ##
+    ## content loss (L_{x}^{SR}) = pixel MSE + VGG loss
+    ## perceptual loss (whole loss) = content loss  + 1e-3 * l_{Gen}^{SR}
+
+    g_loss = mse_loss + vgg_loss #+ g_gan_loss
+    # g_loss = mse_loss + g_gan_loss
+    # g_loss = mse_loss + vgg_loss
 
     g_vars = tl.layers.get_variables_with_name('SRGAN_g', True, True)
     d_vars = tl.layers.get_variables_with_name('SRGAN_d', True, True)
@@ -111,7 +140,7 @@ def train():
     ## the generator when training the actual GAN to avoid undesired local optima.
     ## All SRGAN variants were trained with 10^5 update iterations at a learning
     ## rate of 10−4 and another 10-5 iterations at a lower rate of 10−5. We
-    g_optim_init = tf.train.AdamOptimizer(lr_v, beta1=beta1).minimize(pixel_mse, var_list=g_vars) # pre-train G
+    g_optim_init = tf.train.AdamOptimizer(lr_v, beta1=beta1).minimize(mse_loss, var_list=g_vars) # pre-train G
 
     ## We alternate updates to the generator and discriminator network, which is
     ## equivalent to k = 1 as used in Goodfellow et al. [21]. Our generator
@@ -127,8 +156,9 @@ def train():
     ###========================== RESTORE MODEL =============================###
     sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=False))
     tl.layers.initialize_global_variables(sess)
+    # if tl.files.load_and_assign_npz(sess=sess, name=checkpoint_dir+'/g_{}.npz'.format(tl.global_flag['mode']), network=net_g) is False:
     tl.files.load_and_assign_npz(sess=sess, name=checkpoint_dir+'/g_{}_init.npz'.format(tl.global_flag['mode']), network=net_g)
-    tl.files.load_and_assign_npz(sess=sess, name=checkpoint_dir+'/d_{}_init.npz'.format(tl.global_flag['mode']), network=net_d)
+    tl.files.load_and_assign_npz(sess=sess, name=checkpoint_dir+'/d_{}.npz'.format(tl.global_flag['mode']), network=net_d)
 
     ###============================= LOAD VGG ===============================###
     vgg19_npy_path = "vgg19.npy"
@@ -158,7 +188,7 @@ def train():
     tl.vis.save_images(sample_imgs_96, [ni, ni], save_dir+'/_train_sample_96.png')
     tl.vis.save_images(sample_imgs_384, [ni, ni], save_dir+'/_train_sample_384.png')
 
-    for epoch in range(0, n_epoch + n_epoch_init):
+    for epoch in range(n_epoch_init, n_epoch + n_epoch_init):
         ## update learning rate
         if epoch < n_epoch_init:
             if epoch !=0 and (epoch % decay_every_init == 0):
@@ -184,7 +214,6 @@ def train():
         #         print(log)
 
         epoch_time = time.time()
-
         total_d_loss, total_g_loss, total_mse_loss, n_iter = 0, 0, 0, 0
 
         ## If your machine cannot load all images into memory, you should use
@@ -207,14 +236,22 @@ def train():
 
             if epoch < n_epoch_init:
                 ## initalization G with pixel-MSE only
-                errM, _ = sess.run([pixel_mse, g_optim_init], {t_image: b_imgs_96, t_target_image: b_imgs_384})
+                errM, _ = sess.run([mse_loss, g_optim_init], {t_image: b_imgs_96, t_target_image: b_imgs_384})
                 print("Epoch [%2d/%2d] %4d time: %4.4fs, mse: %.8f " % (epoch, n_epoch, n_iter, time.time() - step_time, errM))
                 total_mse_loss += errM
             else:
+                ## debug
+                # t_im, p_im, t_v, p_v = sess.run([t_target_image_224, t_predict_image_224, vgg_target_emb.outputs, vgg_predict_emb.outputs],
+                #         {t_image: b_imgs_96, t_target_image: b_imgs_384})
+                # print('t', t_im.shape, t_im.min(), t_im.max()) # (16, 224, 224, 3) [-1, 1]
+                # print('p', p_im.shape, p_im.min(), p_im.max()) # (16, 224, 224, 3) [-1, 1]
+                # print('tv', t_v.shape, t_v.min(), t_v.max())   # (16, 14, 14, 512) 0.0 6670.18
+                # print('pv', p_v.shape, p_v.min(), p_v.max())   # (16, 14, 14, 512) 0.0 6452.19
+                # exit()
                 ## update D
                 errD, _ = sess.run([d_loss, d_optim], {t_image: b_imgs_96, t_target_image: b_imgs_384})
                 ## update G
-                errG, errM, errV, errA, _ = sess.run([g_loss, pixel_mse, vgg_mse, g_gan_loss, g_optim], {t_image: b_imgs_96, t_target_image: b_imgs_384})
+                errG, errM, errV, errA, _ = sess.run([g_loss, mse_loss, vgg_loss, g_gan_loss, g_optim], {t_image: b_imgs_96, t_target_image: b_imgs_384})
                 print("Epoch [%2d/%2d] %4d time: %4.4fs, d_loss: %.8f g_loss: %.8f (mse: %.6f vgg: %.6f adv: %.6f)" % (epoch, n_epoch, n_iter, time.time() - step_time, errD, errG, errM, errV, errA))
                 total_d_loss += errD
                 total_g_loss += errG
@@ -229,17 +266,16 @@ def train():
 
         ###======================= EVALUATION =========================###
         ## quick evaluation on train set
-        if (epoch != 0) and (epoch % 5 == 0):
-            out = sess.run(net_g_test.outputs, {t_image: sample_imgs_96})
-            print('out', out.shape, out.min(), out.max())
-            print("[*] save images")
-            tl.vis.save_images(out, [ni, ni], save_dir+'/train_%d.png' % epoch)
+        # if (epoch != 0) and (epoch % 5 == 0):
+        out = sess.run(net_g_test.outputs, {t_image: sample_imgs_96})
+        print('out', out.shape, out.min(), out.max())
+        print("[*] save images")
+        tl.vis.save_images(out, [ni, ni], save_dir+'/train_%d.png' % epoch)
 
         ###======================= SAVE MODEL =========================###
         if (epoch != 0) and (epoch % 5 == 0):
             if epoch < n_epoch_init:
                 tl.files.save_npz(net_g.all_params, name=checkpoint_dir+'/g_{}_init.npz'.format(tl.global_flag['mode']), sess=sess)
-                tl.files.save_npz(net_d.all_params, name=checkpoint_dir+'/d_{}_init.npz'.format(tl.global_flag['mode']), sess=sess)
             else:
                 tl.files.save_npz(net_g.all_params, name=checkpoint_dir+'/g_{}.npz'.format(tl.global_flag['mode']), sess=sess)
                 tl.files.save_npz(net_d.all_params, name=checkpoint_dir+'/d_{}.npz'.format(tl.global_flag['mode']), sess=sess)
@@ -271,7 +307,7 @@ def evaluate():
     ###========================== DEFINE MODEL ============================###
     valid_lr_img = valid_lr_imgs[0]
         # valid_lr_img = get_imgs_fn('test.png', 'data2017/')  # if you want to test your own image
-    valid_lr_img = (valid_lr_img / 127.5) - 1   # rescale
+    valid_lr_img = (valid_lr_img / 127.5) - 1   # rescale to ［－1, 1]
     # print(valid_lr_img.min(), valid_lr_img.max())
     # exit()
 
@@ -286,7 +322,9 @@ def evaluate():
     tl.files.load_and_assign_npz(sess=sess, name=checkpoint_dir+'/g_srgan_init.npz', network=net_g)
 
     ###======================= EVALUATION =============================###
+    start_time = time.time()
     out = sess.run(net_g.outputs, {t_image: [valid_lr_img]})
+    print("took: %4.4fs" % (time.time() - start_time))
 
     print("LR size: %s /  gen HR size: %s" % (size, out.shape))
     print('out', out.shape, out.min(), out.max())
