@@ -14,6 +14,11 @@ from model import *
 from utils import *
 from config import config, log_config
 
+
+SRGAN_g = SRGAN_g2
+SRGAN_d = SRGAN_d2
+
+
 ###====================== HYPER-PARAMETERS ===========================###
 ## Adam
 batch_size = config.TRAIN.batch_size
@@ -88,9 +93,6 @@ def train():
     ## train inference
     t_image = tf.placeholder('float32', [batch_size, 96, 96, 3], name='t_image_input_to_SRGAN_generator')
     t_target_image = tf.placeholder('float32', [batch_size, 384, 384, 3], name='t_target_image')
-
-    SRGAN_g = SRGAN_g2
-    SRGAN_d = SRGAN_d2
 
     net_g = SRGAN_g(t_image, is_train=True, reuse=False)
     net_d, logits_real = SRGAN_d(t_target_image, is_train=True, reuse=False)
@@ -224,13 +226,13 @@ def train():
         print(log)
 
         ## quick evaluation on train set
-        if (epoch != 0) and (epoch % 1 == 0):
+        if (epoch != 0) and (epoch % 10 == 0):
             out = sess.run(net_g_test.outputs, {t_image: sample_imgs_96})#; print('gen sub-image:', out.shape, out.min(), out.max())
             print("[*] save images")
             tl.vis.save_images(out, [ni, ni], save_dir_ginit+'/train_%d.png' % epoch)
 
         ## save model
-        if (epoch != 0) and (epoch % 5 == 0):
+        if (epoch != 0) and (epoch % 10 == 0):
             tl.files.save_npz(net_g.all_params, name=checkpoint_dir+'/g_{}_init.npz'.format(tl.global_flag['mode']), sess=sess)
 
     ###========================= train GAN (SRGAN) =========================###
@@ -279,13 +281,13 @@ def train():
         print(log)
 
         ## quick evaluation on train set
-        if (epoch != 0) and (epoch % 1 == 0):
+        if (epoch != 0) and (epoch % 10 == 0):
             out = sess.run(net_g_test.outputs, {t_image: sample_imgs_96})#; print('gen sub-image:', out.shape, out.min(), out.max())
             print("[*] save images")
             tl.vis.save_images(out, [ni, ni], save_dir_gan+'/train_%d.png' % epoch)
 
         ## save model
-        if (epoch != 0) and (epoch % 5 == 0):
+        if (epoch != 0) and (epoch % 10 == 0):
             tl.files.save_npz(net_g.all_params, name=checkpoint_dir+'/g_{}.npz'.format(tl.global_flag['mode']), sess=sess)
             tl.files.save_npz(net_d.all_params, name=checkpoint_dir+'/d_{}.npz'.format(tl.global_flag['mode']), sess=sess)
 
@@ -324,6 +326,8 @@ def evaluate():
     t_image = tf.placeholder('float32', [None, size[0], size[1], size[2]], name='input_image')
 
     net_g = SRGAN_g(t_image, is_train=False, reuse=False)
+    # print(net_g.outputs)
+    # exit()
 
     ###========================== RESTORE G =============================###
     sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=False))
@@ -336,7 +340,7 @@ def evaluate():
     print("took: %4.4fs" % (time.time() - start_time))
 
     print("LR size: %s /  gen HR size: %s" % (size, out.shape))
-    print('out', out.shape, out.min(), out.max())
+    # print('out', out.shape, out.min(), out.max())
     print("[*] save images")
     tl.vis.save_image(out[0], save_dir+'/valid_gen.png')
     tl.vis.save_image(valid_lr_imgs[0], save_dir+'/valid_lr.png')
