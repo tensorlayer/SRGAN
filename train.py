@@ -19,16 +19,17 @@ from config import config, log_config
 batch_size = config.TRAIN.batch_size
 lr_init = config.TRAIN.lr_init
 beta1 = config.TRAIN.beta1
-## adversarial learning
-n_epoch = config.TRAIN.n_epoch
-## initialize G
+## initialize G (SRResNet)
 n_epoch_init = config.TRAIN.n_epoch_init
-lr_decay_init = config.TRAIN.lr_decay_init
-decay_every_init = config.TRAIN.decay_every_init
+## adversarial learning (SRGAN)
+n_epoch = config.TRAIN.n_epoch
+lr_decay = config.TRAIN.lr_decay
+decay_every = config.TRAIN.decay_every
 
 ni = int(np.sqrt(batch_size))
 
 def read_all_imgs(img_list, path='', n_threads=32):
+    """ Returns all images in array by given path and name of each image file. """
     imgs = []
     for idx in range(0, len(img_list), n_threads):
         b_imgs_list = img_list[idx : idx + n_threads]
@@ -56,11 +57,12 @@ def normalize_mean_squared_error(output, target):
         nmse = tf.reduce_mean(nmse_a / nmse_b)
     return nmse
 
-
 def train():
     ## create folders to save result images and trained model
-    save_dir = "samples/{}".format(tl.global_flag['mode'])
-    tl.files.exists_or_mkdir(save_dir)
+    save_dir_ginit = "samples/{}_ginit".format(tl.global_flag['mode'])
+    save_dir_gan = "samples/{}_gan".format(tl.global_flag['mode'])
+    tl.files.exists_or_mkdir(save_dir_ginit)
+    tl.files.exists_or_mkdir(save_dir_gan)
     checkpoint_dir = "checkpoint"
     tl.files.exists_or_mkdir(checkpoint_dir)
 
@@ -87,15 +89,15 @@ def train():
     t_image = tf.placeholder('float32', [batch_size, 96, 96, 3], name='t_image_input_to_SRGAN_generator')
     t_target_image = tf.placeholder('float32', [batch_size, 384, 384, 3], name='t_target_image')
 
-    net_g = SRGAN_g(t_image, is_train=True, reuse=False)
-
+    SRGAN_g = SRGAN_g2
     SRGAN_d = SRGAN_d2
+
+    net_g = SRGAN_g(t_image, is_train=True, reuse=False)
     net_d, logits_real = SRGAN_d(t_target_image, is_train=True, reuse=False)
     _,     logits_fake = SRGAN_d(net_g.outputs, is_train=True, reuse=True)
 
     net_g.print_params(False)
     net_d.print_params(False)
-    # exit()
 
     ## vgg inference
     t_target_image_224 = tf.image.resize_images(t_target_image, size=[224, 224], method=0, align_corners=False) # resize_target_image_for_vgg # http://tensorlayer.readthedocs.io/en/latest/_modules/tensorlayer/layers.html#UpSampling2dLayer
@@ -114,11 +116,22 @@ def train():
     d_loss2 = tl.cost.sigmoid_cross_entropy(logits_fake, tf.zeros_like(logits_fake), name='d2')
     d_loss = d_loss1 + d_loss2
 
-    g_gan_loss = 1e-2 * tl.cost.sigmoid_cross_entropy(logits_fake, tf.ones_like(logits_fake), name='g')
-    # mse_loss = tl.cost.mean_squared_error(net_g.outputs, t_target_image, is_mean=True)
-    # vgg_loss = tl.cost.mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs, is_mean=True)
-    mse_loss = normalize_mean_squared_error(net_g.outputs, t_target_image)
-    vgg_loss = 1e-2 * normalize_mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs)
+    # g_gan_loss = 1e-1 * tl.cost.sigmoid_cross_entropy(logits_fake, tf.ones_like(logits_fake), name='g')
+    # mse_loss = normalize_mean_squared_error(net_g.outputs, t_target_image)                                            # simiao
+    # vgg_loss = 5e-1 * normalize_mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs)
+
+    g_gan_loss = 1e-3 * tl.cost.sigmoid_cross_entropy(logits_fake, tf.ones_like(logits_fake), name='g')                 # paper 1e-3
+    mse_loss = tl.cost.mean_squared_error(net_g.outputs , t_target_image, is_mean=True)                                 # paper
+    vgg_loss = 0.0000025 * tl.cost.mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs, is_mean=True)    # simiao
+
+    # # simiao
+    # g_gan_loss = tl.cost.sigmoid_cross_entropy(logits_fake, tf.ones_like(logits_fake), name='g')
+    # mse_loss = normalize_mean_squared_error(net_g.outputs, t_target_image)
+    # vgg_loss = 0.00025 * tl.cost.mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs, is_mean=True)
+
+    ## history
+    # MSE + 1e-2*g_gan_loss: 1020 green broken, but can recover/ 1030 always green
+    # MSE + 1e-3*g_gan_loss: more stable than 1e-2, 1043 bubble
 
     ## We formulate the perceptual loss as the weighted sum of a content loss
     ## and an adversarial loss component l_{Gen}^{SR}.
@@ -126,30 +139,17 @@ def train():
     ## content loss (L_{x}^{SR}) = pixel MSE + VGG loss
     ## perceptual loss (whole loss) = content loss  + 1e-3 * l_{Gen}^{SR}
 
-    g_loss = mse_loss + vgg_loss #+ g_gan_loss
-    # g_loss = mse_loss + g_gan_loss
-    # g_loss = mse_loss + vgg_loss
+    # g_loss = mse_loss + vgg_loss + g_gan_loss
+    g_loss = mse_loss + g_gan_loss
 
     g_vars = tl.layers.get_variables_with_name('SRGAN_g', True, True)
     d_vars = tl.layers.get_variables_with_name('SRGAN_d', True, True)
 
     with tf.variable_scope('learning_rate'):
         lr_v = tf.Variable(lr_init, trainable=False)
-
-    ## We employed the trained MSE-based SRResNet network as initialization for
-    ## the generator when training the actual GAN to avoid undesired local optima.
-    ## All SRGAN variants were trained with 10^5 update iterations at a learning
-    ## rate of 10−4 and another 10-5 iterations at a lower rate of 10−5. We
-    g_optim_init = tf.train.AdamOptimizer(lr_v, beta1=beta1).minimize(mse_loss, var_list=g_vars) # pre-train G
-
-    ## We alternate updates to the generator and discriminator network, which is
-    ## equivalent to k = 1 as used in Goodfellow et al. [21]. Our generator
-    ## network has 16 identical (B = 16) residual blocks.
-    ## For each mini-batch we crop 16 random 96 × 96 sub images of distinct
-    ## training images. Note that we can apply the generator model to images of
-    ## arbitrary size as it is fully convolutional. For optimization we use
-    ## Adam with β1 = 0.9. The SRResNet networks were trained with a learning
-    ## rate of 10−4 and 10^6 update iterations.
+    ## SRResNet
+    g_optim_init = tf.train.AdamOptimizer(lr_v, beta1=beta1).minimize(mse_loss, var_list=g_vars)
+    ## SRGAN
     g_optim = tf.train.AdamOptimizer(lr_v, beta1=beta1).minimize(g_loss, var_list=g_vars)
     d_optim = tf.train.AdamOptimizer(lr_v, beta1=beta1).minimize(d_loss, var_list=d_vars)
 
@@ -182,39 +182,21 @@ def train():
     sample_imgs = train_hr_imgs[0:batch_size]
     # sample_imgs = read_all_imgs(train_hr_img_list[0:batch_size], path=config.TRAIN.hr_img_path, n_threads=32) # if no pre-load train set
     sample_imgs_384 = tl.prepro.threading_data(sample_imgs, fn=crop_sub_imgs_fn, is_random=False)
-    print(sample_imgs_384.shape, sample_imgs_384.min(), sample_imgs_384.max())
+    print('sample HR sub-image:',sample_imgs_384.shape, sample_imgs_384.min(), sample_imgs_384.max())
     sample_imgs_96 = tl.prepro.threading_data(sample_imgs_384, fn=downsample_fn)
-    print(sample_imgs_96.shape, sample_imgs_96.min(), sample_imgs_96.max())
-    tl.vis.save_images(sample_imgs_96, [ni, ni], save_dir+'/_train_sample_96.png')
-    tl.vis.save_images(sample_imgs_384, [ni, ni], save_dir+'/_train_sample_384.png')
+    print('sample LR sub-image:', sample_imgs_96.shape, sample_imgs_96.min(), sample_imgs_96.max())
+    tl.vis.save_images(sample_imgs_96, [ni, ni], save_dir_ginit+'/_train_sample_96.png')
+    tl.vis.save_images(sample_imgs_384, [ni, ni], save_dir_ginit+'/_train_sample_384.png')
+    tl.vis.save_images(sample_imgs_96, [ni, ni], save_dir_gan+'/_train_sample_96.png')
+    tl.vis.save_images(sample_imgs_384, [ni, ni], save_dir_gan+'/_train_sample_384.png')
 
-    for epoch in range(n_epoch_init, n_epoch + n_epoch_init):
-        ## update learning rate
-        if epoch < n_epoch_init:
-            if epoch !=0 and (epoch % decay_every_init == 0):
-                new_lr_decay = lr_decay_init ** (epoch // decay_every_init)
-                sess.run(tf.assign(lr_v, lr_init * new_lr_decay))
-                log = " ** new learning rate (for init G): %f" % (lr_init * new_lr_decay)
-                print(log)
-            elif epoch == 0:
-                log = " ** init G, lr: %f  decay_every_init: %d, lr_decay_init: %f (for init G)" % (lr_init, decay_every_init, lr_decay_init)
-                print(log)
-        elif epoch == n_epoch_init:
-            sess.run(tf.assign(lr_v, lr_init))
-            print(" ** fine-tune with Content loss + Adversarial loss, fixed lr: %f" % lr_init)
-        # else:
-        #     if epoch != n_epoch_init and (epoch % decay_every == 0):
-        #         new_lr_decay = lr_decay ** (epoch // decay_every)
-        #         sess.run(tf.assign(lr_v, lr_init * new_lr_decay))
-        #         log = " ** new learning rate: %f (for GAN)" % (lr_init * new_lr_decay)
-        #         print(log)
-        #     elif epoch == n_epoch_init:
-        #         sess.run(tf.assign(lr_v, lr_init))
-        #         log = " ** init lr: %f  decay_every_epoch: %d, lr_decay: %f (for GAN)" % (lr_init, decay_every, lr_decay)
-        #         print(log)
-
+    ###========================= initialize G (SRResNet) ====================###
+    ## fixed learning rate
+    sess.run(tf.assign(lr_v, lr_init))
+    print(" ** fixed learning rate: %f (for init G)" % lr_init)
+    for epoch in range(0, n_epoch_init):
         epoch_time = time.time()
-        total_d_loss, total_g_loss, total_mse_loss, n_iter = 0, 0, 0, 0
+        total_mse_loss, n_iter = 0, 0
 
         ## If your machine cannot load all images into memory, you should use
         ## this one to load batch of images while training.
@@ -233,52 +215,79 @@ def train():
                     train_hr_imgs[idx : idx + batch_size],
                     fn=crop_sub_imgs_fn, is_random=True)
             b_imgs_96 = tl.prepro.threading_data(b_imgs_384, fn=downsample_fn)
+            ## update G
+            errM, _ = sess.run([mse_loss, g_optim_init], {t_image: b_imgs_96, t_target_image: b_imgs_384})
+            print("Epoch [%2d/%2d] %4d time: %4.4fs, mse: %.8f " % (epoch, n_epoch_init, n_iter, time.time() - step_time, errM))
+            total_mse_loss += errM
+            n_iter += 1
+        log = "[*] Epoch: [%2d/%2d] time: %4.4fs, mse: %.8f" % (epoch, n_epoch_init, time.time() - epoch_time, total_mse_loss/n_iter)
+        print(log)
 
-            if epoch < n_epoch_init:
-                ## initalization G with pixel-MSE only
-                errM, _ = sess.run([mse_loss, g_optim_init], {t_image: b_imgs_96, t_target_image: b_imgs_384})
-                print("Epoch [%2d/%2d] %4d time: %4.4fs, mse: %.8f " % (epoch, n_epoch, n_iter, time.time() - step_time, errM))
-                total_mse_loss += errM
-            else:
-                ## debug
-                # t_im, p_im, t_v, p_v = sess.run([t_target_image_224, t_predict_image_224, vgg_target_emb.outputs, vgg_predict_emb.outputs],
-                #         {t_image: b_imgs_96, t_target_image: b_imgs_384})
-                # print('t', t_im.shape, t_im.min(), t_im.max()) # (16, 224, 224, 3) [-1, 1]
-                # print('p', p_im.shape, p_im.min(), p_im.max()) # (16, 224, 224, 3) [-1, 1]
-                # print('tv', t_v.shape, t_v.min(), t_v.max())   # (16, 14, 14, 512) 0.0 6670.18
-                # print('pv', p_v.shape, p_v.min(), p_v.max())   # (16, 14, 14, 512) 0.0 6452.19
-                # exit()
-                ## update D
-                errD, _ = sess.run([d_loss, d_optim], {t_image: b_imgs_96, t_target_image: b_imgs_384})
-                ## update G
-                errG, errM, errV, errA, _ = sess.run([g_loss, mse_loss, vgg_loss, g_gan_loss, g_optim], {t_image: b_imgs_96, t_target_image: b_imgs_384})
-                print("Epoch [%2d/%2d] %4d time: %4.4fs, d_loss: %.8f g_loss: %.8f (mse: %.6f vgg: %.6f adv: %.6f)" % (epoch, n_epoch, n_iter, time.time() - step_time, errD, errG, errM, errV, errA))
-                total_d_loss += errD
-                total_g_loss += errG
+        ## quick evaluation on train set
+        if (epoch != 0) and (epoch % 1 == 0):
+            out = sess.run(net_g_test.outputs, {t_image: sample_imgs_96})#; print('gen sub-image:', out.shape, out.min(), out.max())
+            print("[*] save images")
+            tl.vis.save_images(out, [ni, ni], save_dir_ginit+'/train_%d.png' % epoch)
+
+        ## save model
+        if (epoch != 0) and (epoch % 5 == 0):
+            tl.files.save_npz(net_g.all_params, name=checkpoint_dir+'/g_{}_init.npz'.format(tl.global_flag['mode']), sess=sess)
+
+    ###========================= train GAN (SRGAN) =========================###
+    for epoch in range(0, n_epoch):
+        ## update learning rate
+        if epoch !=0 and (epoch % decay_every == 0):
+            new_lr_decay = lr_decay ** (epoch // decay_every)
+            sess.run(tf.assign(lr_v, lr_init * new_lr_decay))
+            log = " ** new learning rate: %f (for GAN)" % (lr_init * new_lr_decay)
+            print(log)
+        elif epoch == 0:
+            sess.run(tf.assign(lr_v, lr_init))
+            log = " ** init lr: %f  decay_every_init: %d, lr_decay: %f (for GAN)" % (lr_init, decay_every, lr_decay)
+            print(log)
+
+        epoch_time = time.time()
+        total_d_loss, total_g_loss, n_iter = 0, 0, 0
+
+        ## If your machine cannot load all images into memory, you should use
+        ## this one to load batch of images while training.
+        # random.shuffle(train_hr_img_list)
+        # for idx in range(0, len(train_hr_img_list), batch_size):
+        #     step_time = time.time()
+        #     b_imgs_list = train_hr_img_list[idx : idx + batch_size]
+        #     b_imgs = tl.prepro.threading_data(b_imgs_list, fn=get_imgs_fn, path=config.TRAIN.hr_img_path)
+        #     b_imgs_384 = tl.prepro.threading_data(b_imgs, fn=crop_sub_imgs_fn, is_random=True)
+        #     b_imgs_96 = tl.prepro.threading_data(b_imgs_384, fn=downsample_fn)
+
+        ## If your machine have enough memory, please pre-load the whole train set.
+        for idx in range(0, len(train_hr_imgs), batch_size):
+            step_time = time.time()
+            b_imgs_384 = tl.prepro.threading_data(
+                    train_hr_imgs[idx : idx + batch_size],
+                    fn=crop_sub_imgs_fn, is_random=True)
+            b_imgs_96 = tl.prepro.threading_data(b_imgs_384, fn=downsample_fn)
+            ## update D
+            errD, _ = sess.run([d_loss, d_optim], {t_image: b_imgs_96, t_target_image: b_imgs_384})
+            ## update G
+            errG, errM, errV, errA, _ = sess.run([g_loss, mse_loss, vgg_loss, g_gan_loss, g_optim], {t_image: b_imgs_96, t_target_image: b_imgs_384})
+            print("Epoch [%2d/%2d] %4d time: %4.4fs, d_loss: %.8f g_loss: %.8f (mse: %.6f vgg: %.6f adv: %.6f)" % (epoch, n_epoch, n_iter, time.time() - step_time, errD, errG, errM, errV, errA))
+            total_d_loss += errD
+            total_g_loss += errG
             n_iter += 1
 
-        if epoch < n_epoch_init:
-            log = "[*] Epoch: [%2d/%2d] time: %4.4fs, mse: %.8f" % (epoch, n_epoch, time.time() - epoch_time, total_mse_loss/n_iter)
-            print(log)
-        else:
-            log = "[*] Epoch: [%2d/%2d] time: %4.4fs, d_loss: %.8f g_loss: %.8f" % (epoch, n_epoch, time.time() - epoch_time, total_d_loss/n_iter, total_g_loss/n_iter)
-            print(log)
+        log = "[*] Epoch: [%2d/%2d] time: %4.4fs, d_loss: %.8f g_loss: %.8f" % (epoch, n_epoch, time.time() - epoch_time, total_d_loss/n_iter, total_g_loss/n_iter)
+        print(log)
 
-        ###======================= EVALUATION =========================###
         ## quick evaluation on train set
-        # if (epoch != 0) and (epoch % 5 == 0):
-        out = sess.run(net_g_test.outputs, {t_image: sample_imgs_96})
-        print('out', out.shape, out.min(), out.max())
-        print("[*] save images")
-        tl.vis.save_images(out, [ni, ni], save_dir+'/train_%d.png' % epoch)
+        if (epoch != 0) and (epoch % 1 == 0):
+            out = sess.run(net_g_test.outputs, {t_image: sample_imgs_96})#; print('gen sub-image:', out.shape, out.min(), out.max())
+            print("[*] save images")
+            tl.vis.save_images(out, [ni, ni], save_dir_gan+'/train_%d.png' % epoch)
 
-        ###======================= SAVE MODEL =========================###
+        ## save model
         if (epoch != 0) and (epoch % 5 == 0):
-            if epoch < n_epoch_init:
-                tl.files.save_npz(net_g.all_params, name=checkpoint_dir+'/g_{}_init.npz'.format(tl.global_flag['mode']), sess=sess)
-            else:
-                tl.files.save_npz(net_g.all_params, name=checkpoint_dir+'/g_{}.npz'.format(tl.global_flag['mode']), sess=sess)
-                tl.files.save_npz(net_d.all_params, name=checkpoint_dir+'/d_{}.npz'.format(tl.global_flag['mode']), sess=sess)
+            tl.files.save_npz(net_g.all_params, name=checkpoint_dir+'/g_{}.npz'.format(tl.global_flag['mode']), sess=sess)
+            tl.files.save_npz(net_d.all_params, name=checkpoint_dir+'/d_{}.npz'.format(tl.global_flag['mode']), sess=sess)
 
 def evaluate():
     ## create folders to save result images
@@ -339,7 +348,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--mode', type=str, default='srgan', help='srgan')
+    parser.add_argument('--mode', type=str, default='srgan', help='srgan, evaluate')
 
     args = parser.parse_args()
 

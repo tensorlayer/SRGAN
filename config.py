@@ -6,21 +6,18 @@ config.TRAIN = edict()
 
 ## Adam
 config.TRAIN.batch_size = 16
-config.TRAIN.lr_init = 0.0001 # i.e. 1e-4
+config.TRAIN.lr_init = 1e-4
 config.TRAIN.beta1 = 0.9
 
+## initialize G (SRResNet)
+config.TRAIN.n_epoch_init = 2000
+    # config.TRAIN.lr_decay_init = 0.1
+    # config.TRAIN.decay_every_init = int(config.TRAIN.n_epoch_init / 2)
 
-## adversarial learning
-config.TRAIN.n_epoch = 1000
-# config.TRAIN.lr_decay = 0.5
-# config.TRAIN.decay_every = 100
-
-
-## initialize G
-config.TRAIN.n_epoch_init = 1000
-config.TRAIN.lr_decay_init = 0.1
-config.TRAIN.decay_every_init = int(config.TRAIN.n_epoch_init / 2)
-
+## adversarial learning (SRGAN)
+config.TRAIN.n_epoch = 2000
+config.TRAIN.lr_decay = 0.1
+config.TRAIN.decay_every = int(config.TRAIN.n_epoch / 2)
 
 ## train set location
 config.TRAIN.hr_img_path = 'data2017/DIV2K_train_HR/'
