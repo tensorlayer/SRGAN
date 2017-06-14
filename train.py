@@ -124,7 +124,7 @@ def train():
 
     g_gan_loss = 1e-3 * tl.cost.sigmoid_cross_entropy(logits_fake, tf.ones_like(logits_fake), name='g')                 # paper 1e-3
     mse_loss = tl.cost.mean_squared_error(net_g.outputs , t_target_image, is_mean=True)                                 # paper
-    vgg_loss = 0.0000025 * tl.cost.mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs, is_mean=True)    # simiao
+    vgg_loss = 1e-5 * tl.cost.mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs, is_mean=True)    # simiao
 
     # # simiao
     # g_gan_loss = tl.cost.sigmoid_cross_entropy(logits_fake, tf.ones_like(logits_fake), name='g')
@@ -134,6 +134,7 @@ def train():
     ## history
     # MSE + 1e-2*g_gan_loss: 1020 green broken, but can recover/ 1030 always green
     # MSE + 1e-3*g_gan_loss: more stable than 1e-2, 1043 bubble
+    # <-- may need to increase n_filter
 
     ## We formulate the perceptual loss as the weighted sum of a content loss
     ## and an adversarial loss component l_{Gen}^{SR}.
@@ -326,8 +327,6 @@ def evaluate():
     t_image = tf.placeholder('float32', [None, size[0], size[1], size[2]], name='input_image')
 
     net_g = SRGAN_g(t_image, is_train=False, reuse=False)
-    # print(net_g.outputs)
-    # exit()
 
     ###========================== RESTORE G =============================###
     sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=False))

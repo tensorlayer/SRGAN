@@ -65,9 +65,6 @@ def SRGAN_g2(t_image, is_train=False, reuse=False):
     g_init = tf.random_normal_initializer(1., 0.02)
 
     size = t_image.get_shape().as_list()
-    # print(size)
-    # print(size[1]/2, size[2]/2)
-    # exit()
 
     with tf.variable_scope("SRGAN_g", reuse=reuse) as vs:
         tl.layers.set_name_reuse(reuse)
@@ -98,13 +95,13 @@ def SRGAN_g2(t_image, is_train=False, reuse=False):
         ## 0, 1, 2, 3 BILINEAR NEAREST BICUBIC AREA
         n = UpSampling2dLayer(n, size=[size[1]*2, size[2]*2], is_scale=False, method=1, align_corners=False, name='up1/upsample2d')
         n = Conv2d(n, 64, (3, 3), (1, 1),
-               padding='SAME', W_init=w_init, b_init=b_init, name='up1/conv2d')
+               padding='SAME', W_init=w_init, b_init=b_init, name='up1/conv2d')   # <-- may need to increase n_filter
         n = BatchNormLayer(n, act=tf.nn.relu,
                 is_train=is_train, gamma_init=g_init, name='up1/batch_norm')
 
         n = UpSampling2dLayer(n, size=[size[1]*4, size[2]*4], is_scale=False, method=1, align_corners=False, name='up2/upsample2d')
         n = Conv2d(n, 32, (3, 3), (1, 1),
-               padding='SAME', W_init=w_init, b_init=b_init, name='up2/conv2d')
+               padding='SAME', W_init=w_init, b_init=b_init, name='up2/conv2d')     # <-- may need to increase n_filter
         n = BatchNormLayer(n, act=tf.nn.relu,
                 is_train=is_train, gamma_init=g_init, name='up2/batch_norm')
 
