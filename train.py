@@ -15,7 +15,7 @@ from utils import *
 from config import config, log_config
 
 
-SRGAN_g = SRGAN_g2
+# SRGAN_g = SRGAN_g2
 SRGAN_d = SRGAN_d2
 
 
@@ -24,7 +24,7 @@ SRGAN_d = SRGAN_d2
 batch_size = config.TRAIN.batch_size
 lr_init = config.TRAIN.lr_init
 beta1 = config.TRAIN.beta1
-## initialize G (SRResNet)
+## initialize G
 n_epoch_init = config.TRAIN.n_epoch_init
 ## adversarial learning (SRGAN)
 n_epoch = config.TRAIN.n_epoch
@@ -44,31 +44,13 @@ def read_all_imgs(img_list, path='', n_threads=32):
         print('read %d from %s' % (len(imgs), path))
     return imgs
 
-def normalize_mean_squared_error(output, target):
-    """Return the TensorFlow expression of normalized mean-squre-error of two distributions.
-
-    Parameters
-    ----------
-    output : 2D or 4D tensor.
-    target : 2D or 4D tensor.
-    """
-    with tf.name_scope("mean_squared_error_loss"):
-        if output.get_shape().ndims == 2:   # [batch_size, n_feature]
-            nmse_a = tf.sqrt(tf.reduce_sum(tf.squared_difference(output, target), axis=1))
-            nmse_b = tf.sqrt(tf.reduce_sum(tf.square(target), axis=1))
-        elif output.get_shape().ndims == 4: # [batch_size, w, h, c]
-            nmse_a = tf.sqrt(tf.reduce_sum(tf.squared_difference(output, target), axis=[1,2,3]))
-            nmse_b = tf.sqrt(tf.reduce_sum(tf.square(target), axis=[1,2,3]))
-        nmse = tf.reduce_mean(nmse_a / nmse_b)
-    return nmse
-
 def train():
     ## create folders to save result images and trained model
     save_dir_ginit = "samples/{}_ginit".format(tl.global_flag['mode'])
     save_dir_gan = "samples/{}_gan".format(tl.global_flag['mode'])
     tl.files.exists_or_mkdir(save_dir_ginit)
     tl.files.exists_or_mkdir(save_dir_gan)
-    checkpoint_dir = "checkpoint"
+    checkpoint_dir = "checkpoint"  # checkpoint_resize_conv
     tl.files.exists_or_mkdir(checkpoint_dir)
 
     ###====================== PRE-LOAD DATA ===========================###
@@ -101,7 +83,7 @@ def train():
     net_g.print_params(False)
     net_d.print_params(False)
 
-    ## vgg inference
+    ## vgg inference. 0, 1, 2, 3 BILINEAR NEAREST BICUBIC AREA
     t_target_image_224 = tf.image.resize_images(t_target_image, size=[224, 224], method=0, align_corners=False) # resize_target_image_for_vgg # http://tensorlayer.readthedocs.io/en/latest/_modules/tensorlayer/layers.html#UpSampling2dLayer
     t_predict_image_224 = tf.image.resize_images(net_g.outputs, size=[224, 224], method=0, align_corners=False) # resize_generate_image_for_vgg
 
@@ -124,33 +106,30 @@ def train():
 
     g_gan_loss = 1e-3 * tl.cost.sigmoid_cross_entropy(logits_fake, tf.ones_like(logits_fake), name='g')                 # paper 1e-3
     mse_loss = tl.cost.mean_squared_error(net_g.outputs , t_target_image, is_mean=True)                                 # paper
-    vgg_loss = 1e-5 * tl.cost.mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs, is_mean=True)    # simiao
+    vgg_loss = 2e-6 * tl.cost.mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs, is_mean=True)    # simiao
 
-    # # simiao
+    ## simiao
     # g_gan_loss = tl.cost.sigmoid_cross_entropy(logits_fake, tf.ones_like(logits_fake), name='g')
     # mse_loss = normalize_mean_squared_error(net_g.outputs, t_target_image)
     # vgg_loss = 0.00025 * tl.cost.mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs, is_mean=True)
 
     ## history
-    # MSE + 1e-2*g_gan_loss: 1020 green broken, but can recover/ 1030 always green
-    # MSE + 1e-3*g_gan_loss: more stable than 1e-2, 1043 bubble
-    # <-- may need to increase n_filter
+    # resize-conv MSE + 1e-2*g_gan_loss: 1020 green broken, but can recover/ 1030 always green
+    # resize-conv MSE + 1e-3*g_gan_loss: more stable than 1e-2, 1043 bubble
+    # resize-conv MSE + 1e-3*g_gan_loss +1e-6*VGG 相比 mse+gan, bubble少了很多，d loss ≈ 0.5 (G not powerful?)
+    # subpixel-conv MSE + 1e-3*g_gan_loss +1e-6*VGG (no pretrain), small checkboard. VGG loss ≈ MSE / 2
+    # train higher VGG loss?
+    # subpixel-conv MSE + 1e-3*g_gan_loss +2e-6*VGG (no pretrain), small checkboard. VGG loss ≈ MSE / 2
 
-    ## We formulate the perceptual loss as the weighted sum of a content loss
-    ## and an adversarial loss component l_{Gen}^{SR}.
-    ##
-    ## content loss (L_{x}^{SR}) = pixel MSE + VGG loss
-    ## perceptual loss (whole loss) = content loss  + 1e-3 * l_{Gen}^{SR}
-
-    # g_loss = mse_loss + vgg_loss + g_gan_loss
-    g_loss = mse_loss + g_gan_loss
+    g_loss = mse_loss + vgg_loss + g_gan_loss
+    # g_loss = mse_loss + g_gan_loss
 
     g_vars = tl.layers.get_variables_with_name('SRGAN_g', True, True)
     d_vars = tl.layers.get_variables_with_name('SRGAN_d', True, True)
 
     with tf.variable_scope('learning_rate'):
         lr_v = tf.Variable(lr_init, trainable=False)
-    ## SRResNet
+    ## Pretrain
     g_optim_init = tf.train.AdamOptimizer(lr_v, beta1=beta1).minimize(mse_loss, var_list=g_vars)
     ## SRGAN
     g_optim = tf.train.AdamOptimizer(lr_v, beta1=beta1).minimize(g_loss, var_list=g_vars)
@@ -159,8 +138,8 @@ def train():
     ###========================== RESTORE MODEL =============================###
     sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=False))
     tl.layers.initialize_global_variables(sess)
-    # if tl.files.load_and_assign_npz(sess=sess, name=checkpoint_dir+'/g_{}.npz'.format(tl.global_flag['mode']), network=net_g) is False:
-    tl.files.load_and_assign_npz(sess=sess, name=checkpoint_dir+'/g_{}_init.npz'.format(tl.global_flag['mode']), network=net_g)
+    if tl.files.load_and_assign_npz(sess=sess, name=checkpoint_dir+'/g_{}.npz'.format(tl.global_flag['mode']), network=net_g) is False:
+        tl.files.load_and_assign_npz(sess=sess, name=checkpoint_dir+'/g_{}_init.npz'.format(tl.global_flag['mode']), network=net_g)
     tl.files.load_and_assign_npz(sess=sess, name=checkpoint_dir+'/d_{}.npz'.format(tl.global_flag['mode']), network=net_d)
 
     ###============================= LOAD VGG ===============================###
@@ -193,51 +172,51 @@ def train():
     tl.vis.save_images(sample_imgs_96, [ni, ni], save_dir_gan+'/_train_sample_96.png')
     tl.vis.save_images(sample_imgs_384, [ni, ni], save_dir_gan+'/_train_sample_384.png')
 
-    ###========================= initialize G (SRResNet) ====================###
-    ## fixed learning rate
-    sess.run(tf.assign(lr_v, lr_init))
-    print(" ** fixed learning rate: %f (for init G)" % lr_init)
-    for epoch in range(0, n_epoch_init):
-        epoch_time = time.time()
-        total_mse_loss, n_iter = 0, 0
-
-        ## If your machine cannot load all images into memory, you should use
-        ## this one to load batch of images while training.
-        # random.shuffle(train_hr_img_list)
-        # for idx in range(0, len(train_hr_img_list), batch_size):
-        #     step_time = time.time()
-        #     b_imgs_list = train_hr_img_list[idx : idx + batch_size]
-        #     b_imgs = tl.prepro.threading_data(b_imgs_list, fn=get_imgs_fn, path=config.TRAIN.hr_img_path)
-        #     b_imgs_384 = tl.prepro.threading_data(b_imgs, fn=crop_sub_imgs_fn, is_random=True)
-        #     b_imgs_96 = tl.prepro.threading_data(b_imgs_384, fn=downsample_fn)
-
-        ## If your machine have enough memory, please pre-load the whole train set.
-        for idx in range(0, len(train_hr_imgs), batch_size):
-            step_time = time.time()
-            b_imgs_384 = tl.prepro.threading_data(
-                    train_hr_imgs[idx : idx + batch_size],
-                    fn=crop_sub_imgs_fn, is_random=True)
-            b_imgs_96 = tl.prepro.threading_data(b_imgs_384, fn=downsample_fn)
-            ## update G
-            errM, _ = sess.run([mse_loss, g_optim_init], {t_image: b_imgs_96, t_target_image: b_imgs_384})
-            print("Epoch [%2d/%2d] %4d time: %4.4fs, mse: %.8f " % (epoch, n_epoch_init, n_iter, time.time() - step_time, errM))
-            total_mse_loss += errM
-            n_iter += 1
-        log = "[*] Epoch: [%2d/%2d] time: %4.4fs, mse: %.8f" % (epoch, n_epoch_init, time.time() - epoch_time, total_mse_loss/n_iter)
-        print(log)
-
-        ## quick evaluation on train set
-        if (epoch != 0) and (epoch % 10 == 0):
-            out = sess.run(net_g_test.outputs, {t_image: sample_imgs_96})#; print('gen sub-image:', out.shape, out.min(), out.max())
-            print("[*] save images")
-            tl.vis.save_images(out, [ni, ni], save_dir_ginit+'/train_%d.png' % epoch)
-
-        ## save model
-        if (epoch != 0) and (epoch % 10 == 0):
-            tl.files.save_npz(net_g.all_params, name=checkpoint_dir+'/g_{}_init.npz'.format(tl.global_flag['mode']), sess=sess)
+    # ###========================= initialize G ====================###
+    # ## fixed learning rate
+    # sess.run(tf.assign(lr_v, lr_init))
+    # print(" ** fixed learning rate: %f (for init G)" % lr_init)
+    # for epoch in range(0, n_epoch_init+1):
+    #     epoch_time = time.time()
+    #     total_mse_loss, n_iter = 0, 0
+    #
+    #     ## If your machine cannot load all images into memory, you should use
+    #     ## this one to load batch of images while training.
+    #     # random.shuffle(train_hr_img_list)
+    #     # for idx in range(0, len(train_hr_img_list), batch_size):
+    #     #     step_time = time.time()
+    #     #     b_imgs_list = train_hr_img_list[idx : idx + batch_size]
+    #     #     b_imgs = tl.prepro.threading_data(b_imgs_list, fn=get_imgs_fn, path=config.TRAIN.hr_img_path)
+    #     #     b_imgs_384 = tl.prepro.threading_data(b_imgs, fn=crop_sub_imgs_fn, is_random=True)
+    #     #     b_imgs_96 = tl.prepro.threading_data(b_imgs_384, fn=downsample_fn)
+    #
+    #     ## If your machine have enough memory, please pre-load the whole train set.
+    #     for idx in range(0, len(train_hr_imgs), batch_size):
+    #         step_time = time.time()
+    #         b_imgs_384 = tl.prepro.threading_data(
+    #                 train_hr_imgs[idx : idx + batch_size],
+    #                 fn=crop_sub_imgs_fn, is_random=True)
+    #         b_imgs_96 = tl.prepro.threading_data(b_imgs_384, fn=downsample_fn)
+    #         ## update G
+    #         errM, _ = sess.run([mse_loss, g_optim_init], {t_image: b_imgs_96, t_target_image: b_imgs_384})
+    #         print("Epoch [%2d/%2d] %4d time: %4.4fs, mse: %.8f " % (epoch, n_epoch_init, n_iter, time.time() - step_time, errM))
+    #         total_mse_loss += errM
+    #         n_iter += 1
+    #     log = "[*] Epoch: [%2d/%2d] time: %4.4fs, mse: %.8f" % (epoch, n_epoch_init, time.time() - epoch_time, total_mse_loss/n_iter)
+    #     print(log)
+    #
+    #     ## quick evaluation on train set
+    #     if (epoch != 0) and (epoch % 10 == 0):
+    #         out = sess.run(net_g_test.outputs, {t_image: sample_imgs_96})#; print('gen sub-image:', out.shape, out.min(), out.max())
+    #         print("[*] save images")
+    #         tl.vis.save_images(out, [ni, ni], save_dir_ginit+'/train_%d.png' % epoch)
+    #
+    #     ## save model
+    #     if (epoch != 0) and (epoch % 10 == 0):
+    #         tl.files.save_npz(net_g.all_params, name=checkpoint_dir+'/g_{}_init.npz'.format(tl.global_flag['mode']), sess=sess)
 
     ###========================= train GAN (SRGAN) =========================###
-    for epoch in range(0, n_epoch):
+    for epoch in range(50, n_epoch+1):
         ## update learning rate
         if epoch !=0 and (epoch % decay_every == 0):
             new_lr_decay = lr_decay ** (epoch // decay_every)

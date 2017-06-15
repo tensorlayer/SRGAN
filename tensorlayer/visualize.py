@@ -15,6 +15,11 @@ import scipy.misc
 
 def save_image(image, image_path):
     """Save one image.
+
+    Parameters
+    -----------
+    images : numpy array [w, h, c]
+    image_path : string.
     """
     scipy.misc.imsave(image_path, image)
 
