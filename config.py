@@ -10,7 +10,7 @@ config.TRAIN.lr_init = 1e-4
 config.TRAIN.beta1 = 0.9
 
 ## initialize G
-config.TRAIN.n_epoch_init = 200
+config.TRAIN.n_epoch_init = 100
     # config.TRAIN.lr_decay_init = 0.1
     # config.TRAIN.decay_every_init = int(config.TRAIN.n_epoch_init / 2)
 
