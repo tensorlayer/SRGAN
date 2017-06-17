@@ -109,7 +109,7 @@ def SRGAN_g2(t_image, is_train=False, reuse=False):
         return n
 
 
-def SRGAN_d(t_image, is_train=False, reuse=False):
+def SRGAN_d2(t_image, is_train=False, reuse=False):
     """ Discriminator in Photo-Realistic Single Image Super-Resolution Using a Generative Adversarial Network
     feature maps (n) and stride (s) feature maps (n) and stride (s)
     """
@@ -152,7 +152,7 @@ def SRGAN_d(t_image, is_train=False, reuse=False):
 
         return n, logits
 
-def SRGAN_d2(input_images, is_train=True, reuse=False):
+def SRGAN_d(input_images, is_train=True, reuse=False):
     w_init = tf.random_normal_initializer(stddev=0.02)
     b_init = None # tf.constant_initializer(value=0.0)
     gamma_init=tf.random_normal_initializer(1., 0.02)

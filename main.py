@@ -15,8 +15,6 @@ from utils import *
 from config import config, log_config
 
 
-# SRGAN_g = SRGAN_g2
-SRGAN_d = SRGAN_d2
 
 
 ###====================== HYPER-PARAMETERS ===========================###
@@ -218,7 +216,7 @@ def train():
             tl.files.save_npz(net_g.all_params, name=checkpoint_dir+'/g_{}_init.npz'.format(tl.global_flag['mode']), sess=sess)
 
     ###========================= train GAN (SRGAN) =========================###
-    for epoch in range(500, n_epoch+1):
+    for epoch in range(0, n_epoch+1):
         ## update learning rate
         if epoch !=0 and (epoch % decay_every == 0):
             new_lr_decay = lr_decay ** (epoch // decay_every)
