@@ -37,13 +37,13 @@ config.TRAIN.img_path = "your_image_folder/"
 
 - Start training.
 
-```python
+```bash
 python main.py
 ```
 
 - Start evaluation.
 
-```python
+```bash
 python main.py --mode=evaluate
 ```
 
