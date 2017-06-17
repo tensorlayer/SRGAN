@@ -1,3 +1,4 @@
+import argparse
 import os
 import urllib
 import numpy as np
@@ -33,16 +34,22 @@ def download_image(download_str, save_dir):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--img_url_file", type=str, required=True,
+                       help="File that contains list of image IDs and urls.")
+    parser.add_argument("--output_dir", type=str, required=True,
+                       help="Directory where to save outputs.")
+    parser.add_argument("--n_download_urls", type=int, default=20000,
+                       help="Directory where to save outputs.")
+    args = parser.parse_args()
+
     np.random.seed(123456)
-    url_file = "/data/imagenet/fall11_urls.txt"
-    save_dir = "/data/imagenet/img"
-    n_download_imgs = 20000
 
-    with open(url_file) as f:
+    with open(args.img_url_file) as f:
         lines = f.readlines()
-        lines = np.random.choice(lines, size=n_download_imgs, replace=False)
+        lines = np.random.choice(lines, size=args.n_download_urls, replace=False)
 
-    Parallel(n_jobs=12)(delayed(download_image)(line, save_dir) for line in lines)
+    Parallel(n_jobs=12)(delayed(download_image)(line, args.output_dir) for line in lines)
 
 
 if __name__ == "__main__":
