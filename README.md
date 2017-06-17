@@ -18,7 +18,7 @@ TensorFlow Implementation of ["Photo-Realistic Single Image Super-Resolution Usi
 
 <a href="http://tensorlayer.readthedocs.io">
 <div align="center">
-	<img src="img/SRGAN_Result.png" width="80%" height="50%"/>
+	<img src="img/SRGAN_Result2.png" width="80%" height="50%"/>
 </div>
 </a>
 

@@ -296,7 +296,7 @@ def evaluate():
     # exit()
 
     ###========================== DEFINE MODEL ============================###
-    imid = 81 # 0: 企鹅  82－1: 蝴蝶 53: 鸟  65-1: 古堡
+    imid = 64 # 0: 企鹅  81: 蝴蝶 53: 鸟  64: 古堡
     valid_lr_img = valid_lr_imgs[imid]
     valid_hr_img = valid_hr_imgs[imid]
         # valid_lr_img = get_imgs_fn('test.png', 'data2017/')  # if you want to test your own image
