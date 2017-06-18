@@ -1,6 +1,6 @@
 ## Super Resolution Examples
 
-We run this script under TensorFlow 1.1 and the self-contained TensorLayer. If you got error, you may need to update TensorLayer.
+We run this script under TensorFlow 1.2 and the self-contained TensorLayer. If you got error, you may need to update TensorLayer.
 
 
 ### SRGAN Architecture

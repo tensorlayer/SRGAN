@@ -1,17 +1,13 @@
 #! /usr/bin/python
 # -*- coding: utf8 -*-
 
-# import dial_nn
 import tensorflow as tf
 import tensorlayer as tl
 from tensorlayer.layers import *
-
-
-from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
-from tensorflow.python.ops import variable_scope as vs
-from tensorflow.python.ops import math_ops, init_ops, array_ops, nn
-from tensorflow.python.util import nest
-from tensorflow.contrib.rnn.python.ops import core_rnn_cell
+# from tensorflow.python.ops import variable_scope as vs
+# from tensorflow.python.ops import math_ops, init_ops, array_ops, nn
+# from tensorflow.python.util import nest
+# from tensorflow.contrib.rnn.python.ops import core_rnn_cell
 
 # https://github.com/david-gpu/srez/blob/master/srez_model.py
 
