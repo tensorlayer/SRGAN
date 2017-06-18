@@ -14,7 +14,7 @@ TensorFlow Implementation of ["Photo-Realistic Single Image Super-Resolution Usi
 </a>
 
 
-#### Results
+### Results
 
 <a href="http://tensorlayer.readthedocs.io">
 <div align="center">
@@ -22,14 +22,14 @@ TensorFlow Implementation of ["Photo-Realistic Single Image Super-Resolution Usi
 </div>
 </a>
 
-#### Prepare Data and Pre-trained VGG
+### Prepare Data and Pre-trained VGG
 - In this experiment, we used images from [DIV2K - bicubic downscaling x4 competition](http://www.vision.ee.ethz.ch/ntire17/), you can also use your own data by setting your image folder in `config.py`
 
 - Download VGG model as [tutorial_vgg16.py](https://github.com/zsdonghao/tensorlayer/blob/master/example/tutorial_vgg16.py) show.
 
 
 
-#### Run
+### Run
 - Set your image folder in `config.py`.
 
 ```python
