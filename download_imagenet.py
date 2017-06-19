@@ -1,4 +1,5 @@
 import argparse
+import socket
 import os
 import urllib
 import numpy as np
@@ -43,7 +44,9 @@ def main():
                        help="Directory where to save outputs.")
     args = parser.parse_args()
 
-    np.random.seed(123456)
+    # np.random.seed(123456)
+
+    socket.setdefaulttimeout(10)
 
     with open(args.img_url_file) as f:
         lines = f.readlines()
