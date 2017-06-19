@@ -45,7 +45,7 @@ python main.py
 - Start evaluation.
 
 ```bash
-python main.py --mode=evaluate <-- I added some images for evaluation, just run this
+python main.py --mode=evaluate 
 ```
 
 

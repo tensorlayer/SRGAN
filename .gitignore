@@ -1,8 +1,8 @@
 ._*
 *.pyc
 .DS_Store
-#*.___npz
+*.npz
 sample/
 samples/
-#___checkpoint/
+checkpoint/
 __pycache__/
