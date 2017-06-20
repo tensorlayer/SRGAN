@@ -25,7 +25,7 @@ def download_image(download_str, save_dir):
             img_size_bytes = os.path.getsize(save_img)
             img_size_KB = img_size_bytes / 1024
 
-            if width < 500 or height < 500 or img_size_KB < 100:
+            if width < 500 or height < 500 or img_size_KB < 200:
                 os.remove(save_img)
                 print("Remove downloaded images (w:{}, h:{}, s:{}KB)".format(width, height, img_size_KB))
         else:
@@ -34,8 +34,10 @@ def download_image(download_str, save_dir):
         if not downloaded:
             print("Cannot download.")
         else:
-            os.remove(save_img)
             print("Remove failed, downloaded images.")
+
+        if os.path.isfile(save_img):
+            os.remove(save_img)
 
 
 def main():
