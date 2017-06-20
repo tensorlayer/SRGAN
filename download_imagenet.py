@@ -21,9 +21,13 @@ def download_image(download_str, save_dir):
             downloaded = True
             with Image.open(save_img) as img:
                 width, height = img.size
-                if width < 500 or height < 500:
-                    os.remove(save_img)
-                    print("Remove downloaded images (w:{}, h:{})".format(width, height))
+
+            img_size_bytes = os.path.getsize(save_img)
+            img_size_KB = img_size_bytes / 1024
+
+            if width < 500 or height < 500 or img_size_KB < 100:
+                os.remove(save_img)
+                print("Remove downloaded images (w:{}, h:{}, s:{}KB)".format(width, height, img_size_KB))
         else:
             print("Already downloaded {}".format(save_img))
     except Exception:
