@@ -23,7 +23,7 @@ TensorFlow Implementation of ["Photo-Realistic Single Image Super-Resolution Usi
 </a>
 
 ### Prepare Data and Pre-trained VGG
-- In this experiment, we used images from [DIV2K - bicubic downscaling x4 competition](http://www.vision.ee.ethz.ch/ntire17/), you can also use your own data by setting your image folder in `config.py`
+- In this experiment, we used images from [DIV2K - bicubic downscaling x4 competition](http://www.vision.ee.ethz.ch/ntire17/), besides [Yahoo MirFlickr25k](http://press.liacs.nl/mirflickr/mirdownload.html) is also a good choice. Alternatively, you can use your own data by setting your image folder in `config.py`.
 
 - Download VGG model as [tutorial_vgg16.py](https://github.com/zsdonghao/tensorlayer/blob/master/example/tutorial_vgg16.py) show.
 
