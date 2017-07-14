@@ -56,3 +56,7 @@ python main.py --mode=evaluate
 * [1] [Photo-Realistic Single Image Super-Resolution Using a Generative Adversarial Network](https://arxiv.org/abs/1609.04802)
 * [2] [Is the deconvolution layer the same as a convolutional layer ?](https://arxiv.org/abs/1609.07009)
 
+### License
+
+- For academic and non-commercial use only.
+- For commercial use, please contact dhsig552@163.com
