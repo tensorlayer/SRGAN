@@ -59,4 +59,4 @@ python main.py --mode=evaluate
 ### License
 
 - For academic and non-commercial use only.
-- For commercial use, please contact dhsig552@163.com
+- For commercial use, please contact dhsig552@163.com.
