@@ -87,7 +87,7 @@ def set_name_reuse(enable=True):
 
     Parameters
     ------------
-    enable : boolean, enable name reuse.
+    enable : boolean, enable name reuse. (None means False).
 
     Examples
     ------------
@@ -270,24 +270,26 @@ class Layer(object):
             if name not in ['', None, False]:
                 set_keep['_layers_name_list'].append(name)
 
-
     def print_params(self, details=True):
         ''' Print all info of parameters in the network'''
         for i, p in enumerate(self.all_params):
             if details:
                 try:
-                    print("  param {:3}: {:15} (mean: {:<18}, median: {:<18}, std: {:<18})   {}".format(i, str(p.eval().shape), p.eval().mean(), np.median(p.eval()), p.eval().std(), p.name))
+                    # print("  param {:3}: {:15} (mean: {:<18}, median: {:<18}, std: {:<18})   {}".format(i, str(p.eval().shape), p.eval().mean(), np.median(p.eval()), p.eval().std(), p.name))
+                    val = p.eval()
+                    print("  param {:3}: {:20} {:15}    {} (mean: {:<18}, median: {:<18}, std: {:<18})   ".format(i, p.name, str(val.shape), p.dtype.name, val.mean(), np.median(val), val.std()))
                 except Exception as e:
                     print(str(e))
                     raise Exception("Hint: print params details after tl.layers.initialize_global_variables(sess) or use network.print_params(False).")
             else:
-                print("  param {:3}: {:15}    {}".format(i, str(p.get_shape()), p.name))
+                print("  param {:3}: {:20} {:15}    {}".format(i, p.name, str(p.get_shape()), p.dtype.name))
         print("  num of params: %d" % self.count_params())
 
     def print_layers(self):
         ''' Print all info of layers in the network '''
-        for i, p in enumerate(self.all_layers):
-            print("  layer %d: %s" % (i, str(p)))
+        for i, layer in enumerate(self.all_layers):
+            # print("  layer %d: %s" % (i, str(layer)))
+            print("  layer {:3}: {:20} {:15}    {}".format(i, layer.name, str(layer.get_shape()), layer.dtype.name))
 
     def count_params(self):
         ''' Return the number of parameters in the network '''
@@ -685,8 +687,11 @@ class DenseLayer(Layer):
         print("  [TL] DenseLayer  %s: %d %s" % (self.name, self.n_units, act.__name__))
         with tf.variable_scope(name) as vs:
             W = tf.get_variable(name='W', shape=(n_in, n_units), initializer=W_init, **W_init_args )
-            if b_init:
-                b = tf.get_variable(name='b', shape=(n_units), initializer=b_init, **b_init_args )
+            if b_init is not None:
+                try:
+                    b = tf.get_variable(name='b', shape=(n_units), initializer=b_init, **b_init_args )
+                except: # If initializer is a constant, do not specify shape.
+                    b = tf.get_variable(name='b', initializer=b_init, **b_init_args )
                 self.outputs = act(tf.matmul(self.inputs, W) + b)
             else:
                 self.outputs = act(tf.matmul(self.inputs, W))
@@ -697,7 +702,7 @@ class DenseLayer(Layer):
         self.all_params = list(layer.all_params)
         self.all_drop = dict(layer.all_drop)
         self.all_layers.extend( [self.outputs] )
-        if b_init:
+        if b_init is not None:
             self.all_params.extend( [W, b] )
         else:
             self.all_params.extend( [W] )
@@ -1113,7 +1118,7 @@ class DropconnectDenseLayer(Layer):
 
 class Conv1dLayer(Layer):
     """
-    The :class:`Conv1dLayer` class is a 1D CNN layer, see `tf.nn.conv1d <https://www.tensorflow.org/versions/master/api_docs/python/nn.html#conv1d>`_.
+    The :class:`Conv1dLayer` class is a 1D CNN layer, see `tf.nn.convolution <https://www.tensorflow.org/api_docs/python/tf/nn/convolution>`_.
 
     Parameters
     ----------
@@ -1124,10 +1129,12 @@ class Conv1dLayer(Layer):
         shape of the filters, [filter_length, in_channels, out_channels].
     stride : an int.
         The number of entries by which the filter is moved right at each step.
+    dilation_rate : an int.
+        Specifies the filter upsampling/input downsampling rate.
     padding : a string from: "SAME", "VALID".
         The type of padding algorithm to use.
     use_cudnn_on_gpu : An optional bool. Defaults to True.
-    data_format : An optional string from "NHWC", "NCHW". Defaults to "NHWC", the data is stored in the order of [batch, in_width, in_channels]. The "NCHW" format stores data as [batch, in_channels, in_width].
+    data_format : As it is 1D conv, default is 'NWC'.
     W_init : weights initializer
         The initializer for initializing the weight matrix.
     b_init : biases initializer or None
@@ -1145,9 +1152,10 @@ class Conv1dLayer(Layer):
         act = tf.identity,
         shape = [5, 1, 5],
         stride = 1,
+        dilation_rate = 1,
         padding='SAME',
         use_cudnn_on_gpu=None,
-        data_format=None,
+        data_format='NWC',
         W_init = tf.truncated_normal_initializer(stddev=0.02),
         b_init = tf.constant_initializer(value=0.0),
         W_init_args = {},
@@ -1162,13 +1170,19 @@ class Conv1dLayer(Layer):
             act = tf.identity
         with tf.variable_scope(name) as vs:
             W = tf.get_variable(name='W_conv1d', shape=shape, initializer=W_init, **W_init_args )
+            self.outputs = tf.nn.convolution(
+                self.inputs,
+                W,
+                strides=(stride,),
+                padding=padding,
+                dilation_rate=(dilation_rate,),
+                data_format=data_format
+            ) #1.2
             if b_init:
                 b = tf.get_variable(name='b_conv1d', shape=(shape[-1]), initializer=b_init, **b_init_args )
-                self.outputs = act( tf.nn.conv1d(self.inputs, W, stride=stride, padding=padding,
-                            use_cudnn_on_gpu=use_cudnn_on_gpu, data_format=data_format) + b ) #1.2
-            else:
-                self.outputs = act( tf.nn.conv1d(self.inputs, W, stride=stride, padding=padding,
-                            use_cudnn_on_gpu=use_cudnn_on_gpu, data_format=data_format))
+                self.outputs = self.outputs + b
+
+            self.outputs = act(self.outputs)
 
         self.all_layers = list(layer.all_layers)
         self.all_params = list(layer.all_params)
@@ -1509,7 +1523,7 @@ class UpSampling2dLayer(Layer):
     Parameters
     -----------
     layer : a layer class with 4-D Tensor of shape [batch, height, width, channels] or 3-D Tensor of shape [height, width, channels].
-    size : a tupe of int or float.
+    size : a tuple of int or float.
         (height, width) scale factor or new size of height and width.
     is_scale : boolean, if True (default), size is scale factor, otherwise, size is number of pixels of height and width.
     method : 0, 1, 2, 3. ResizeMethod. Defaults to ResizeMethod.BILINEAR.
@@ -1536,12 +1550,12 @@ class UpSampling2dLayer(Layer):
             if is_scale:
                 size_h = size[0] * int(self.inputs.get_shape()[0])
                 size_w = size[1] * int(self.inputs.get_shape()[1])
-                size = [size_h, size_w]
+                size = [int(size_h), int(size_w)]
         elif len(self.inputs.get_shape()) == 4:
             if is_scale:
                 size_h = size[0] * int(self.inputs.get_shape()[1])
                 size_w = size[1] * int(self.inputs.get_shape()[2])
-                size = [size_h, size_w]
+                size = [int(size_h), int(size_w)]
         else:
             raise Exception("Donot support shape %s" % self.inputs.get_shape())
         print("  [TL] UpSampling2dLayer %s: is_scale:%s size:%s method:%d align_corners:%s" %
@@ -1590,12 +1604,12 @@ class DownSampling2dLayer(Layer):
             if is_scale:
                 size_h = size[0] * int(self.inputs.get_shape()[0])
                 size_w = size[1] * int(self.inputs.get_shape()[1])
-                size = [size_h, size_w]
+                size = [int(size_h), int(size_w)]
         elif len(self.inputs.get_shape()) == 4:
             if is_scale:
                 size_h = size[0] * int(self.inputs.get_shape()[1])
                 size_w = size[1] * int(self.inputs.get_shape()[2])
-                size = [size_h, size_w]
+                size = [int(size_h), int(size_w)]
         else:
             raise Exception("Donot support shape %s" % self.inputs.get_shape())
         print("  [TL] DownSampling2dLayer %s: is_scale:%s size:%s method:%d, align_corners:%s" %
@@ -1610,6 +1624,43 @@ class DownSampling2dLayer(Layer):
         self.all_params = list(layer.all_params)
         self.all_drop = dict(layer.all_drop)
         self.all_layers.extend( [self.outputs] )
+
+
+def AtrousConv1dLayer(net, n_filter=32, filter_size=2, stride=1, dilation=1, act=None,
+        padding='SAME', use_cudnn_on_gpu=None,data_format='NWC',
+        W_init = tf.truncated_normal_initializer(stddev=0.02),
+        b_init = tf.constant_initializer(value=0.0),
+        W_init_args = {}, b_init_args = {},name ='conv1d',):
+    """Wrapper for :class:`AtrousConv1dLayer`, if you don't understand how to use :class:`Conv1dLayer`, this function may be easier.
+
+    Parameters
+    ----------
+    net : TensorLayer layer.
+    n_filter : number of filter.
+    filter_size : an int.
+    stride : an int.
+    dilation : an int, filter dilation size.
+    act : None or activation function.
+    others : see :class:`Conv1dLayer`.
+    """
+    if act is None:
+        act = tf.identity
+    net = Conv1dLayer(layer = net,
+            act = act,
+            shape = [filter_size, int(net.outputs.get_shape()[-1]), n_filter],
+            stride = stride,
+            padding = padding,
+            dilation_rate = dilation,
+            use_cudnn_on_gpu = use_cudnn_on_gpu,
+            data_format = data_format,
+            W_init = W_init,
+            b_init = b_init,
+            W_init_args = W_init_args,
+            b_init_args = b_init_args,
+            name = name,
+        )
+    return net
+
 
 class AtrousConv2dLayer(Layer):
     """The :class:`AtrousConv2dLayer` class is Atrous convolution (a.k.a. convolution with holes or dilated convolution) 2D layer, see `tf.nn.atrous_conv2d <https://www.tensorflow.org/versions/master/api_docs/python/nn.html#atrous_conv2d>`_.
@@ -1804,8 +1855,8 @@ def deconv2d_bilinear_upsampling_initializer(shape):
     return bilinear_weights_init
 
 ## Convolutional layer (Simplified)
-def Conv1d(net, n_filter=32, filter_size=5, stride=1, act=None,
-        padding='SAME', use_cudnn_on_gpu=None,data_format=None,
+def Conv1d(net, n_filter=32, filter_size=5, stride=1, dilation_rate=1, act=None,
+        padding='SAME', use_cudnn_on_gpu=None, data_format="NWC",
         W_init = tf.truncated_normal_initializer(stddev=0.02),
         b_init = tf.constant_initializer(value=0.0),
         W_init_args = {}, b_init_args = {}, name ='conv1d',):
@@ -1817,6 +1868,7 @@ def Conv1d(net, n_filter=32, filter_size=5, stride=1, act=None,
     n_filter : number of filter.
     filter_size : an int.
     stride : an int.
+    dilation_rate : As it is 1D conv, the default is "NWC".
     act : None or activation function.
     others : see :class:`Conv1dLayer`.
     """
@@ -1826,6 +1878,7 @@ def Conv1d(net, n_filter=32, filter_size=5, stride=1, act=None,
             act = act,
             shape = [filter_size, int(net.outputs.get_shape()[-1]), n_filter],
             stride = stride,
+            dilation_rate = dilation_rate,
             padding = padding,
             use_cudnn_on_gpu = use_cudnn_on_gpu,
             data_format = data_format,
@@ -1866,9 +1919,15 @@ def Conv2d(net, n_filter=32, filter_size=(3, 3), strides=(1, 1), act = None,
     assert len(strides) == 2, "len(strides) should be 2, Conv2d and Conv2dLayer are different."
     if act is None:
         act = tf.identity
+
+    try:
+        pre_channel = int(net.outputs.get_shape()[-1])
+    except: # if pre_channel is ?, it happens when using Spatial Transformer Net
+        pre_channel = 1
+        print("[warnings] unknow input channels, set to 1")
     net = Conv2dLayer(net,
                        act = act,
-                       shape = [filter_size[0], filter_size[1], int(net.outputs.get_shape()[-1]), n_filter],  # 32 features for each 5x5 patch
+                       shape = [filter_size[0], filter_size[1], pre_channel, n_filter],  # 32 features for each 5x5 patch
                        strides = [1, strides[0], strides[1], 1],
                        padding = padding,
                        W_init = W_init,
@@ -1900,8 +1959,14 @@ def DeConv2d(net, n_out_channel = 32, filter_size=(3, 3),
     assert len(strides) == 2, "len(strides) should be 2, DeConv2d and DeConv2dLayer are different."
     if act is None:
         act = tf.identity
-    if batch_size is None:
-        batch_size = tf.shape(net.outputs)[0]
+    # if batch_size is None:
+    #     batch_size = tf.shape(net.outputs)[0]
+    fixed_batch_size = net.outputs.get_shape().with_rank_at_least(1)[0]
+    if fixed_batch_size.value:
+        batch_size = fixed_batch_size.value
+    else:
+        from tensorflow.python.ops import array_ops
+        batch_size = array_ops.shape(net.outputs)[0]
     net = DeConv2dLayer(layer = net,
                     act = act,
                     shape = [filter_size[0], filter_size[1], n_out_channel, int(net.outputs.get_shape()[-1])],
@@ -2050,7 +2115,92 @@ def MeanPool3d(net, filter_size, strides, padding='valid', data_format='channels
 ## Super resolution
 def SubpixelConv2d(net, scale=2, n_out_channel=None, act=tf.identity, name='subpixel_conv2d'):
     """The :class:`SubpixelConv2d` class is a sub-pixel 2d convolutional ayer, usually be used
-    for super-resolution application.
+    for Super-Resolution applications, `example code <https://github.com/zsdonghao/SRGAN/>`_.
+
+    Parameters
+    ------------
+    net : TensorLayer layer.
+    scale : int, upscaling ratio, a wrong setting will lead to Dimension size error.
+    n_out_channel : int or None, the number of output channels.
+        Note that, the number of input channels == (scale x scale) x The number of output channels.
+        If None, automatically set n_out_channel == the number of input channels / (scale x scale).
+    act : activation function.
+    name : string.
+        An optional name to attach to this layer.
+
+    Examples
+    ---------
+    >>> # examples here just want to tell you how to set the n_out_channel.
+    >>> x = np.random.rand(2, 16, 16, 4)
+    >>> X = tf.placeholder("float32", shape=(2, 16, 16, 4), name="X")
+    >>> net = InputLayer(X, name='input')
+    >>> net = SubpixelConv2d(net, scale=2, n_out_channel=1, name='subpixel_conv2d')
+    >>> y = sess.run(net.outputs, feed_dict={X: x})
+    >>> print(x.shape, y.shape)
+    ... (2, 16, 16, 4) (2, 32, 32, 1)
+    >>>
+    >>> x = np.random.rand(2, 16, 16, 4*10)
+    >>> X = tf.placeholder("float32", shape=(2, 16, 16, 4*10), name="X")
+    >>> net = InputLayer(X, name='input2')
+    >>> net = SubpixelConv2d(net, scale=2, n_out_channel=10, name='subpixel_conv2d2')
+    >>> y = sess.run(net.outputs, feed_dict={X: x})
+    >>> print(x.shape, y.shape)
+    ... (2, 16, 16, 40) (2, 32, 32, 10)
+    >>>
+    >>> x = np.random.rand(2, 16, 16, 25*10)
+    >>> X = tf.placeholder("float32", shape=(2, 16, 16, 25*10), name="X")
+    >>> net = InputLayer(X, name='input3')
+    >>> net = SubpixelConv2d(net, scale=5, n_out_channel=None, name='subpixel_conv2d3')
+    >>> y = sess.run(net.outputs, feed_dict={X: x})
+    >>> print(x.shape, y.shape)
+    ... (2, 16, 16, 250) (2, 80, 80, 10)
+
+    References
+    ------------
+    - `Real-Time Single Image and Video Super-Resolution Using an Efficient Sub-Pixel Convolutional Neural Network <https://arxiv.org/pdf/1609.05158.pdf>`_
+    """
+    # github/Tetrachrome/subpixel  https://github.com/Tetrachrome/subpixel/blob/master/subpixel.py
+
+    _err_log = "SubpixelConv2d: The number of input channels == (scale x scale) x The number of output channels"
+
+    scope_name = tf.get_variable_scope().name
+    if scope_name:
+        name = scope_name + '/' + name
+
+    def _PS(X, r, n_out_channel):
+        if n_out_channel >= 1:
+            assert int(X.get_shape()[-1]) == (r ** 2) * n_out_channel, _err_log
+            bsize, a, b, c = X.get_shape().as_list()
+            bsize = tf.shape(X)[0] # Handling Dimension(None) type for undefined batch dim
+            Xs=tf.split(X,r,3) #b*h*w*r*r
+            Xr=tf.concat(Xs,2) #b*h*(r*w)*r
+            X=tf.reshape(Xr,(bsize,r*a,r*b,n_out_channel)) # b*(r*h)*(r*w)*c
+        else:
+            print(_err_log)
+        return X
+
+    inputs = net.outputs
+
+    if n_out_channel is None:
+        assert int(inputs.get_shape()[-1])/ (scale ** 2) % 1 == 0, _err_log
+        n_out_channel = int(int(inputs.get_shape()[-1])/ (scale ** 2))
+
+    print("  [TL] SubpixelConv2d  %s: scale: %d n_out_channel: %s act: %s" % (name, scale, n_out_channel, act.__name__))
+
+    net_new = Layer(inputs, name=name)
+    # with tf.name_scope(name):
+    with tf.variable_scope(name) as vs:
+        net_new.outputs = act(_PS(inputs, r=scale, n_out_channel=n_out_channel))
+
+    net_new.all_layers = list(net.all_layers)
+    net_new.all_params = list(net.all_params)
+    net_new.all_drop = dict(net.all_drop)
+    net_new.all_layers.extend( [net_new.outputs] )
+    return net_new
+
+def SubpixelConv2d_old(net, scale=2, n_out_channel=None, act=tf.identity, name='subpixel_conv2d'):
+    """The :class:`SubpixelConv2d` class is a sub-pixel 2d convolutional ayer, usually be used
+    for Super-Resolution applications, `example code <https://github.com/zsdonghao/SRGAN/>`_.
 
     Parameters
     ------------
@@ -2149,6 +2299,268 @@ def SubpixelConv2d(net, scale=2, n_out_channel=None, act=tf.identity, name='subp
     net_new.all_drop = dict(net.all_drop)
     net_new.all_layers.extend( [net_new.outputs] )
     return net_new
+
+
+
+
+## Spatial Transformer Nets
+def transformer(U, theta, out_size, name='SpatialTransformer2dAffine', **kwargs):
+    """Spatial Transformer Layer for `2D Affine Transformation <https://en.wikipedia.org/wiki/Affine_transformation>`_
+    , see :class:`SpatialTransformer2dAffineLayer` class.
+
+    Parameters
+    ----------
+    U : float
+        The output of a convolutional net should have the
+        shape [num_batch, height, width, num_channels].
+    theta: float
+        The output of the localisation network should be [num_batch, 6], value range should be [0, 1] (via tanh).
+    out_size: tuple of two ints
+        The size of the output of the network (height, width)
+
+    References
+    ----------
+    - `Spatial Transformer Networks <https://arxiv.org/abs/1506.02025>`_
+    - `TensorFlow/Models <https://github.com/tensorflow/models/tree/master/transformer>`_
+
+    Notes
+    -----
+    - To initialize the network to the identity transform init.
+    >>> ``theta`` to
+    >>> identity = np.array([[1., 0., 0.],
+    ...                      [0., 1., 0.]])
+    >>> identity = identity.flatten()
+    >>> theta = tf.Variable(initial_value=identity)
+    """
+
+    def _repeat(x, n_repeats):
+        with tf.variable_scope('_repeat'):
+            rep = tf.transpose(
+                tf.expand_dims(tf.ones(shape=tf.stack([n_repeats, ])), 1), [1, 0])
+            rep = tf.cast(rep, 'int32')
+            x = tf.matmul(tf.reshape(x, (-1, 1)), rep)
+            return tf.reshape(x, [-1])
+
+    def _interpolate(im, x, y, out_size):
+        with tf.variable_scope('_interpolate'):
+            # constants
+            num_batch = tf.shape(im)[0]
+            height = tf.shape(im)[1]
+            width = tf.shape(im)[2]
+            channels = tf.shape(im)[3]
+
+            x = tf.cast(x, 'float32')
+            y = tf.cast(y, 'float32')
+            height_f = tf.cast(height, 'float32')
+            width_f = tf.cast(width, 'float32')
+            out_height = out_size[0]
+            out_width = out_size[1]
+            zero = tf.zeros([], dtype='int32')
+            max_y = tf.cast(tf.shape(im)[1] - 1, 'int32')
+            max_x = tf.cast(tf.shape(im)[2] - 1, 'int32')
+
+            # scale indices from [-1, 1] to [0, width/height]
+            x = (x + 1.0)*(width_f) / 2.0
+            y = (y + 1.0)*(height_f) / 2.0
+
+            # do sampling
+            x0 = tf.cast(tf.floor(x), 'int32')
+            x1 = x0 + 1
+            y0 = tf.cast(tf.floor(y), 'int32')
+            y1 = y0 + 1
+
+            x0 = tf.clip_by_value(x0, zero, max_x)
+            x1 = tf.clip_by_value(x1, zero, max_x)
+            y0 = tf.clip_by_value(y0, zero, max_y)
+            y1 = tf.clip_by_value(y1, zero, max_y)
+            dim2 = width
+            dim1 = width*height
+            base = _repeat(tf.range(num_batch)*dim1, out_height*out_width)
+            base_y0 = base + y0*dim2
+            base_y1 = base + y1*dim2
+            idx_a = base_y0 + x0
+            idx_b = base_y1 + x0
+            idx_c = base_y0 + x1
+            idx_d = base_y1 + x1
+
+            # use indices to lookup pixels in the flat image and restore
+            # channels dim
+            im_flat = tf.reshape(im, tf.stack([-1, channels]))
+            im_flat = tf.cast(im_flat, 'float32')
+            Ia = tf.gather(im_flat, idx_a)
+            Ib = tf.gather(im_flat, idx_b)
+            Ic = tf.gather(im_flat, idx_c)
+            Id = tf.gather(im_flat, idx_d)
+
+            # and finally calculate interpolated values
+            x0_f = tf.cast(x0, 'float32')
+            x1_f = tf.cast(x1, 'float32')
+            y0_f = tf.cast(y0, 'float32')
+            y1_f = tf.cast(y1, 'float32')
+            wa = tf.expand_dims(((x1_f-x) * (y1_f-y)), 1)
+            wb = tf.expand_dims(((x1_f-x) * (y-y0_f)), 1)
+            wc = tf.expand_dims(((x-x0_f) * (y1_f-y)), 1)
+            wd = tf.expand_dims(((x-x0_f) * (y-y0_f)), 1)
+            output = tf.add_n([wa*Ia, wb*Ib, wc*Ic, wd*Id])
+            return output
+
+    def _meshgrid(height, width):
+        with tf.variable_scope('_meshgrid'):
+            # This should be equivalent to:
+            #  x_t, y_t = np.meshgrid(np.linspace(-1, 1, width),
+            #                         np.linspace(-1, 1, height))
+            #  ones = np.ones(np.prod(x_t.shape))
+            #  grid = np.vstack([x_t.flatten(), y_t.flatten(), ones])
+            x_t = tf.matmul(tf.ones(shape=tf.stack([height, 1])),
+                            tf.transpose(tf.expand_dims(tf.linspace(-1.0, 1.0, width), 1), [1, 0]))
+            y_t = tf.matmul(tf.expand_dims(tf.linspace(-1.0, 1.0, height), 1),
+                            tf.ones(shape=tf.stack([1, width])))
+
+            x_t_flat = tf.reshape(x_t, (1, -1))
+            y_t_flat = tf.reshape(y_t, (1, -1))
+
+            ones = tf.ones_like(x_t_flat)
+            grid = tf.concat(axis=0, values=[x_t_flat, y_t_flat, ones])
+            return grid
+
+    def _transform(theta, input_dim, out_size):
+        with tf.variable_scope('_transform'):
+            num_batch = tf.shape(input_dim)[0]
+            height = tf.shape(input_dim)[1]
+            width = tf.shape(input_dim)[2]
+            num_channels = tf.shape(input_dim)[3]
+            theta = tf.reshape(theta, (-1, 2, 3))
+            theta = tf.cast(theta, 'float32')
+
+            # grid of (x_t, y_t, 1), eq (1) in ref [1]
+            height_f = tf.cast(height, 'float32')
+            width_f = tf.cast(width, 'float32')
+            out_height = out_size[0]
+            out_width = out_size[1]
+            grid = _meshgrid(out_height, out_width)
+            grid = tf.expand_dims(grid, 0)
+            grid = tf.reshape(grid, [-1])
+            grid = tf.tile(grid, tf.stack([num_batch]))
+            grid = tf.reshape(grid, tf.stack([num_batch, 3, -1]))
+
+            # Transform A x (x_t, y_t, 1)^T -> (x_s, y_s)
+            T_g = tf.matmul(theta, grid)
+            x_s = tf.slice(T_g, [0, 0, 0], [-1, 1, -1])
+            y_s = tf.slice(T_g, [0, 1, 0], [-1, 1, -1])
+            x_s_flat = tf.reshape(x_s, [-1])
+            y_s_flat = tf.reshape(y_s, [-1])
+
+            input_transformed = _interpolate(
+                input_dim, x_s_flat, y_s_flat,
+                out_size)
+
+            output = tf.reshape(
+                input_transformed, tf.stack([num_batch, out_height, out_width, num_channels]))
+            return output
+
+    with tf.variable_scope(name):
+        output = _transform(theta, U, out_size)
+        return output
+
+def batch_transformer(U, thetas, out_size, name='BatchSpatialTransformer2dAffine'):
+    """Batch Spatial Transformer function for `2D Affine Transformation <https://en.wikipedia.org/wiki/Affine_transformation>`_.
+
+    Parameters
+    ----------
+    U : float
+        tensor of inputs [batch, height, width, num_channels]
+    thetas : float
+        a set of transformations for each input [batch, num_transforms, 6]
+    out_size : int
+        the size of the output [out_height, out_width]
+    Returns: float
+        Tensor of size [batch * num_transforms, out_height, out_width, num_channels]
+    """
+    with tf.variable_scope(name):
+        num_batch, num_transforms = map(int, thetas.get_shape().as_list()[:2])
+        indices = [[i]*num_transforms for i in xrange(num_batch)]
+        input_repeated = tf.gather(U, tf.reshape(indices, [-1]))
+        return transformer(input_repeated, thetas, out_size)
+
+class SpatialTransformer2dAffineLayer(Layer):
+    """The :class:`SpatialTransformer2dAffineLayer` class is a
+    `Spatial Transformer Layer <https://arxiv.org/abs/1506.02025>`_ for
+    `2D Affine Transformation <https://en.wikipedia.org/wiki/Affine_transformation>`_.
+
+    Parameters
+    -----------
+    layer : a layer class with 4-D Tensor of shape [batch, height, width, channels]
+    theta_layer : a layer class for the localisation network.
+        In this layer, we will use a :class:`DenseLayer` to make the theta size to [batch, 6], value range to [0, 1] (via tanh).
+    out_size : tuple of two ints.
+        The size of the output of the network (height, width), the feature maps will be resized by this.
+
+    References
+    -----------
+    - `Spatial Transformer Networks <https://arxiv.org/abs/1506.02025>`_
+    - `TensorFlow/Models <https://github.com/tensorflow/models/tree/master/transformer>`_
+    """
+    def __init__(
+        self,
+        layer = None,
+        theta_layer = None,
+        out_size = [40, 40],
+        name ='sapatial_trans_2d_affine',
+    ):
+        Layer.__init__(self, name=name)
+        self.inputs = layer.outputs
+        self.theta_layer = theta_layer
+        print("  [TL] SpatialTransformer2dAffineLayer %s: in_size:%s out_size:%s" %
+                                (name, self.inputs.get_shape().as_list(), out_size))
+
+        with tf.variable_scope(name) as vs:
+            ## 1. make the localisation network to [batch, 6] via Flatten and Dense.
+            if self.theta_layer.outputs.get_shape().ndims > 2:
+                 self.theta_layer.outputs = flatten_reshape(self.theta_layer.outputs, 'flatten')
+            ## 2. To initialize the network to the identity transform init.
+            # 2.1 W
+            n_in = int(self.theta_layer.outputs.get_shape()[-1])
+            shape = (n_in, 6)
+            W = tf.get_variable(name='W', initializer=tf.zeros(shape))
+            # 2.2 b
+            identity = tf.constant(np.array([[1., 0, 0], [0, 1., 0]]).astype('float32').flatten())
+            b = tf.get_variable(name='b', initializer=identity)
+            # 2.3 transformation matrix
+            self.theta = tf.nn.tanh(tf.matmul(self.theta_layer.outputs, W) + b)
+            ## 3. Spatial Transformer Sampling
+            # 3.1 transformation
+            self.outputs = transformer(self.inputs, self.theta, out_size=out_size)
+            # 3.2 automatically set batch_size and channels
+            # e.g. [?, 40, 40, ?] --> [64, 40, 40, 1] or [64, 20, 20, 4]/ Hao Dong
+            #
+            fixed_batch_size = self.inputs.get_shape().with_rank_at_least(1)[0]
+            if fixed_batch_size.value:
+                batch_size = fixed_batch_size.value
+            else:
+                from tensorflow.python.ops import array_ops
+                batch_size = array_ops.shape(self.inputs)[0]
+            size = self.inputs.get_shape().as_list()
+            n_channels = self.inputs.get_shape().as_list()[-1]
+            # print(self.outputs)
+            self.outputs = tf.reshape(self.outputs, shape=[batch_size, out_size[0], out_size[1], n_channels])
+            # print(self.outputs)
+            # exit()
+            ## 4. Get all parameters
+            variables = tf.get_collection(TF_GRAPHKEYS_VARIABLES, scope=vs.name)
+
+        ## fixed
+        self.all_layers = list(layer.all_layers)
+        self.all_params = list(layer.all_params)
+        self.all_drop = dict(layer.all_drop)
+
+        ## theta_layer
+        self.all_layers.extend(theta_layer.all_layers)
+        self.all_params.extend(theta_layer.all_params)
+        self.all_drop.update(theta_layer.all_drop)
+
+        ## this layer
+        self.all_layers.extend( [self.outputs] )
+        self.all_params.extend( variables )
 
 
 # ## Normalization layer
