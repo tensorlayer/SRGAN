@@ -22,6 +22,12 @@ TensorFlow Implementation of ["Photo-Realistic Single Image Super-Resolution Usi
 </div>
 </a>
 
+<a href="http://tensorlayer.readthedocs.io">
+<div align="center">
+	<img src="img/SRGAN_Result3.png" width="80%" height="50%"/>
+</div>
+</a>
+
 ### Prepare Data and Pre-trained VGG
 
 - 1. You need to download the pretrained VGG19 model in [here](https://mega.nz/#!xZ8glS6J!MAnE91ND_WyfZ_8mvkuSa2YcA7q-1ehfSm-Q1fxOvvs) as [tutorial_vgg19.py](https://github.com/zsdonghao/tensorlayer/blob/master/example/tutorial_vgg19.py) show.
