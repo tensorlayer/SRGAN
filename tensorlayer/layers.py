@@ -1,7 +1,5 @@
 #! /usr/bin/python
-# -*- coding: utf8 -*-
-
-
+# -*- coding: utf-8 -*-
 
 import tensorflow as tf
 import time
@@ -21,11 +19,12 @@ import inspect
 #     "DenseLayer",
 # ]
 
-
 # set_keep = locals()
 set_keep = globals()
 set_keep['_layers_name_list'] =[]
 set_keep['name_reuse'] = False
+
+D_TYPE = tf.float32
 
 try:  # For TF12 and later
     TF_GRAPHKEYS_VARIABLES = tf.GraphKeys.GLOBAL_VARIABLES
@@ -100,13 +99,13 @@ def set_name_reuse(enable=True):
     ...                     embedding_size = embedding_size,
     ...                     name = 'e_embedding')
     >>>        network = tl.layers.DynamicRNNLayer(network,
-    ...                     cell_fn = tf.nn.rnn_cell.BasicLSTMCell,
+    ...                     cell_fn = tf.contrib.rnn.BasicLSTMCell,
     ...                     n_hidden = embedding_size,
     ...                     dropout = (0.7 if is_train else None),
     ...                     initializer = w_init,
     ...                     sequence_length = tl.layers.retrieve_seq_length_op2(input_seqs),
     ...                     return_last = True,
-    ...                     name = 'e_dynamicrnn',)
+    ...                     name = 'e_dynamicrnn')
     >>>    return network
     >>>
     >>> net_train = embed_seq(t_caption, is_train=True, reuse=False)
@@ -116,13 +115,15 @@ def set_name_reuse(enable=True):
     """
     set_keep['name_reuse'] = enable
 
-def initialize_rnn_state(state):
-    """Return the initialized RNN state.
-    The input is LSTMStateTuple or State of RNNCells.
+def initialize_rnn_state(state, feed_dict=None):
+    """Returns the initialized RNN state.
+    The inputs are LSTMStateTuple or State of RNNCells and an optional feed_dict.
 
     Parameters
     -----------
     state : a RNN state.
+    feed_dict : None or a dictionary for initializing the state values (optional).
+        If None, returns the zero state.
     """
     try: # TF1.0
         LSTMStateTuple = tf.contrib.rnn.LSTMStateTuple
@@ -130,11 +131,11 @@ def initialize_rnn_state(state):
         LSTMStateTuple = tf.nn.rnn_cell.LSTMStateTuple
 
     if isinstance(state, LSTMStateTuple):
-        c = state.c.eval()
-        h = state.h.eval()
+        c = state.c.eval(feed_dict=feed_dict)
+        h = state.h.eval(feed_dict=feed_dict)
         return (c, h)
     else:
-        new_state = state.eval()
+        new_state = state.eval(feed_dict=feed_dict)
         return new_state
 
 def print_all_variables(train_only=False):
@@ -151,7 +152,7 @@ def print_all_variables(train_only=False):
         t_vars = tf.trainable_variables()
         print("  [*] printing trainable variables")
     else:
-        try: # TF1.0
+        try: # TF1.0+
             t_vars = tf.global_variables()
         except: # TF0.12
             t_vars = tf.all_variables()
@@ -171,7 +172,7 @@ def get_variables_with_name(name, train_only=True, printable=False):
     if train_only:
         t_vars = tf.trainable_variables()
     else:
-        try: # TF1.0
+        try: # TF1.0+
             t_vars = tf.global_variables()
         except: # TF0.12
             t_vars = tf.all_variables()
@@ -199,7 +200,6 @@ def get_layers_with_name(network=None, name="", printable=False):
         if name in layer.name:
             layers.append(layer)
             if printable:
-                # print(layer.name)
                 print("  got {:3}: {:15}   {}".format(i, layer.name, str(layer.get_shape())))
                 i = i + 1
     return layers
@@ -222,19 +222,52 @@ def list_remove_repeat(l=None):
     [l2.append(i) for i in l if not i in l2]
     return l2
 
+def merge_networks(layers=[]):
+    """Merge all parameters, layers and dropout probabilities to a :class:`Layer`.
+
+    Parameters
+    ----------
+    layer : list of :class:`Layer` instance
+        Merge all parameters, layers and dropout probabilities to the first layer in the list.
+
+    Examples
+    ---------
+    >>> n1 = ...
+    >>> n2 = ...
+    >>> n1 = merge_networks([n1, n2])
+    """
+    layer = layers[0]
+
+    all_params = []
+    all_layers = []
+    all_drop = {}
+    for l in layers:
+        all_params.extend(l.all_params)
+        all_layers.extend(l.all_layers)
+        all_drop.update(l.all_drop)
+
+    layer.all_params = list(all_params)
+    layer.all_layers = list(all_layers)
+    layer.all_drop = dict(all_drop)
+
+    layer.all_layers = list_remove_repeat(layer.all_layers)
+    layer.all_params = list_remove_repeat(layer.all_params)
+
+    return layer
+
 def initialize_global_variables(sess=None):
-    """Excute ``sess.run(tf.global_variables_initializer())`` for TF12+ or
-    sess.run(tf.initialize_all_variables()) for TF11.
+    """Excute ``sess.run(tf.global_variables_initializer())`` for TF 0.12+ or
+    ``sess.run(tf.initialize_all_variables())`` for TF 0.11.
 
     Parameters
     ----------
     sess : a Session
     """
     assert sess is not None
-    try:    # TF12
-        sess.run(tf.global_variables_initializer())
-    except: # TF11
-        sess.run(tf.initialize_all_variables())
+    # try:    # TF12+
+    sess.run(tf.global_variables_initializer())
+    # except: # TF11
+    #     sess.run(tf.initialize_all_variables())
 
 
 ## Basic layer
@@ -259,10 +292,10 @@ class Layer(object):
         name ='layer'
     ):
         self.inputs = inputs
-        scope_name=tf.get_variable_scope().name
+        scope_name = tf.get_variable_scope().name
         if scope_name:
             name = scope_name + '/' + name
-        if (name in set_keep['_layers_name_list']) and name_reuse == False:
+        if (name in set_keep['_layers_name_list']) and set_keep['name_reuse'] == False:
             raise Exception("Layer '%s' already exists, please choice other 'name' or reuse this layer\
             \nHint : Use different name for different 'Layer' (The name is used to control parameter sharing)" % name)
         else:
@@ -270,13 +303,13 @@ class Layer(object):
             if name not in ['', None, False]:
                 set_keep['_layers_name_list'].append(name)
 
-    def print_params(self, details=True):
+    def print_params(self, details=True, session=None):
         ''' Print all info of parameters in the network'''
         for i, p in enumerate(self.all_params):
             if details:
                 try:
                     # print("  param {:3}: {:15} (mean: {:<18}, median: {:<18}, std: {:<18})   {}".format(i, str(p.eval().shape), p.eval().mean(), np.median(p.eval()), p.eval().std(), p.name))
-                    val = p.eval()
+                    val = p.eval(session=session)
                     print("  param {:3}: {:20} {:15}    {} (mean: {:<18}, median: {:<18}, std: {:<18})   ".format(i, p.name, str(val.shape), p.dtype.name, val.mean(), np.median(val), val.std()))
                 except Exception as e:
                     print(str(e))
@@ -410,7 +443,7 @@ class Word2vecEmbeddingInputlayer(Layer):
     name : a string or None
         An optional name to attach to this layer.
 
-    Variables
+    Attributes
     --------------
     nce_cost : a tensor
         The NCE loss.
@@ -488,26 +521,29 @@ class Word2vecEmbeddingInputlayer(Layer):
             embeddings = tf.get_variable(name='embeddings',
                                     shape=(vocabulary_size, embedding_size),
                                     initializer=E_init,
+                                    dtype=D_TYPE,
                                     **E_init_args)
             embed = tf.nn.embedding_lookup(embeddings, self.inputs)
             # Construct the variables for the NCE loss (i.e. negative sampling)
             nce_weights = tf.get_variable(name='nce_weights',
                                     shape=(vocabulary_size, embedding_size),
                                     initializer=nce_W_init,
+                                    dtype=D_TYPE,
                                     **nce_W_init_args)
             nce_biases = tf.get_variable(name='nce_biases',
                                     shape=(vocabulary_size),
                                     initializer=nce_b_init,
+                                    dtype=D_TYPE,
                                     **nce_b_init_args)
 
         # Compute the average NCE loss for the batch.
         # tf.nce_loss automatically draws a new sample of the negative labels
         # each time we evaluate the loss.
         self.nce_cost = tf.reduce_mean(
-            tf.nn.nce_loss(weights=nce_weights, biases=nce_biases,
-                           inputs=embed, labels=train_labels,
-                           num_sampled=num_sampled, num_classes=vocabulary_size,
-                           **nce_loss_args))
+                tf.nn.nce_loss(weights=nce_weights, biases=nce_biases,
+                inputs=embed, labels=train_labels,
+                num_sampled=num_sampled, num_classes=vocabulary_size,
+                **nce_loss_args))
 
         self.outputs = embed
         self.normalized_embeddings = tf.nn.l2_normalize(embeddings, 1)
@@ -543,7 +579,7 @@ class EmbeddingInputlayer(Layer):
     name : a string or None
         An optional name to attach to this layer.
 
-    Variables
+    Attributes
     ------------
     outputs : a tensor
         The outputs of embedding layer.
@@ -611,6 +647,7 @@ class EmbeddingInputlayer(Layer):
             embeddings = tf.get_variable(name='embeddings',
                                     shape=(vocabulary_size, embedding_size),
                                     initializer=E_init,
+                                    dtype=D_TYPE,
                                     **E_init_args)
             embed = tf.nn.embedding_lookup(embeddings, self.inputs)
 
@@ -618,6 +655,88 @@ class EmbeddingInputlayer(Layer):
 
         self.all_layers = [self.outputs]
         self.all_params = [embeddings]
+        self.all_drop = {}
+
+
+class AverageEmbeddingInputlayer(Layer):
+    """The :class:`AverageEmbeddingInputlayer` averages over embeddings of inputs, can be used as the input layer for models like DAN[1] and FastText[2].
+
+    Parameters
+    ------------
+    inputs : input placeholder or tensor
+    vocabulary_size : an integer, the size of vocabulary
+    embedding_size : an integer, the dimension of embedding vectors
+    pad_value : an integer, the scalar pad value used in inputs
+    name : a string, the name of the layer
+    embeddings_initializer : the initializer of the embedding matrix
+    embeddings_kwargs : kwargs to get embedding matrix variable
+
+    References
+    ------------
+    - [1] Iyyer, M., Manjunatha, V., Boyd-Graber, J., & Daum’e III, H. (2015). Deep Unordered Composition Rivals Syntactic Methods for Text Classification. In Association for Computational Linguistics.
+    - [2] Joulin, A., Grave, E., Bojanowski, P., & Mikolov, T. (2016).`Bag of Tricks for Efficient Text Classification. <http://arxiv.org/abs/1607.01759>`_
+    """
+    def __init__(
+            self, inputs, vocabulary_size, embedding_size,
+            pad_value=0,
+            name='average_embedding_layer',
+            embeddings_initializer=tf.random_uniform_initializer(-0.1, 0.1),
+            embeddings_kwargs=None,
+    ):
+        super().__init__(name=name)
+
+        # if embeddings_kwargs is None:
+        #     embeddings_kwargs = {}
+
+        if inputs.get_shape().ndims != 2:
+            raise ValueError(
+                'inputs must be of size batch_size * batch_sentence_length')
+
+        self.inputs = inputs
+
+        print("  [TL] AverageEmbeddingInputlayer %s: (%d, %d)" % (name, vocabulary_size, embedding_size))
+        with tf.variable_scope(name):
+            self.embeddings = tf.get_variable(
+                name='embeddings',
+                shape=(vocabulary_size, embedding_size),
+                initializer=embeddings_initializer,
+                dtype=D_TYPE,
+                **(embeddings_kwargs or {})
+                # **embeddings_kwargs
+            ) # **(embeddings_kwargs or {}),
+
+            word_embeddings = tf.nn.embedding_lookup(
+                self.embeddings, self.inputs,
+                name='word_embeddings',
+            )
+            # Zero out embeddings of pad value
+            masks = tf.not_equal(self.inputs, pad_value, name='masks')
+            word_embeddings *= tf.cast(
+                tf.expand_dims(masks, axis=-1),
+                # tf.float32,
+                dtype=D_TYPE,
+            )
+            sum_word_embeddings = tf.reduce_sum(word_embeddings, axis=1)
+
+            # Count number of non-padding words in each sentence
+            sentence_lengths = tf.count_nonzero(
+                masks,
+                axis=1,
+                keep_dims=True,
+                # dtype=tf.float32,
+                dtype=D_TYPE,
+                name='sentence_lengths',
+            )
+
+            sentence_embeddings = tf.divide(
+                sum_word_embeddings,
+                sentence_lengths + 1e-8,  # Add epsilon to avoid dividing by 0
+                name='sentence_embeddings'
+            )
+
+        self.outputs = sentence_embeddings
+        self.all_layers = [self.outputs]
+        self.all_params = [self.embeddings]
         self.all_drop = {}
 
 ## Dense layer
@@ -686,12 +805,12 @@ class DenseLayer(Layer):
         self.n_units = n_units
         print("  [TL] DenseLayer  %s: %d %s" % (self.name, self.n_units, act.__name__))
         with tf.variable_scope(name) as vs:
-            W = tf.get_variable(name='W', shape=(n_in, n_units), initializer=W_init, **W_init_args )
+            W = tf.get_variable(name='W', shape=(n_in, n_units), initializer=W_init, dtype=D_TYPE, **W_init_args )
             if b_init is not None:
                 try:
-                    b = tf.get_variable(name='b', shape=(n_units), initializer=b_init, **b_init_args )
+                    b = tf.get_variable(name='b', shape=(n_units), initializer=b_init, dtype=D_TYPE, **b_init_args )
                 except: # If initializer is a constant, do not specify shape.
-                    b = tf.get_variable(name='b', initializer=b_init, **b_init_args )
+                    b = tf.get_variable(name='b', initializer=b_init, dtype=D_TYPE, **b_init_args )
                 self.outputs = act(tf.matmul(self.inputs, W) + b)
             else:
                 self.outputs = act(tf.matmul(self.inputs, W))
@@ -778,7 +897,7 @@ class ReconLayer(DenseLayer):
         print("     lambda_l2_w: %f" % lambda_l2_w)
         print("     learning_rate: %f" % learning_rate)
 
-        # Mean-squre-error i.e. quadratic-cost
+        # Mean-square-error i.e. quadratic-cost
         mse = tf.reduce_sum(tf.squared_difference(y, x_recon),  1)
         mse = tf.reduce_mean(mse)            # in theano: mse = ((y - x) ** 2 ).sum(axis=1).mean()
             # mse = tf.reduce_mean(tf.reduce_sum(tf.square(tf.sub(y, x_recon)),  1))
@@ -1099,8 +1218,8 @@ class DropconnectDenseLayer(Layer):
         print("  [TL] DropconnectDenseLayer %s: %d %s" % (self.name, self.n_units, act.__name__))
 
         with tf.variable_scope(name) as vs:
-            W = tf.get_variable(name='W', shape=(n_in, n_units), initializer=W_init, **W_init_args )
-            b = tf.get_variable(name='b', shape=(n_units), initializer=b_init, **b_init_args )
+            W = tf.get_variable(name='W', shape=(n_in, n_units), initializer=W_init, dtype=D_TYPE, **W_init_args )
+            b = tf.get_variable(name='b', shape=(n_units), initializer=b_init, dtype=D_TYPE, **b_init_args )
             self.outputs = act(tf.matmul(self.inputs, W) + b)#, name=name)    # 1.2
 
         set_keep[name] = tf.placeholder(tf.float32)
@@ -1169,7 +1288,7 @@ class Conv1dLayer(Layer):
         if act is None:
             act = tf.identity
         with tf.variable_scope(name) as vs:
-            W = tf.get_variable(name='W_conv1d', shape=shape, initializer=W_init, **W_init_args )
+            W = tf.get_variable(name='W_conv1d', shape=shape, initializer=W_init, dtype=D_TYPE, **W_init_args )
             self.outputs = tf.nn.convolution(
                 self.inputs,
                 W,
@@ -1179,7 +1298,7 @@ class Conv1dLayer(Layer):
                 data_format=data_format
             ) #1.2
             if b_init:
-                b = tf.get_variable(name='b_conv1d', shape=(shape[-1]), initializer=b_init, **b_init_args )
+                b = tf.get_variable(name='b_conv1d', shape=(shape[-1]), initializer=b_init, dtype=D_TYPE, **b_init_args )
                 self.outputs = self.outputs + b
 
             self.outputs = act(self.outputs)
@@ -1218,8 +1337,8 @@ class Conv2dLayer(Layer):
         The arguments for the weights tf.get_variable().
     b_init_args : dictionary
         The arguments for the biases tf.get_variable().
-    use_cudnn_on_gpu : an optional string from: "NHWC", "NCHW". Defaults to "NHWC".
-    data_format : an optional bool. Defaults to True.
+    use_cudnn_on_gpu : bool, default is None.
+    data_format : string "NHWC" or "NCHW", default is "NHWC"
     name : a string or None
         An optional name to attach to this layer.
 
@@ -1277,9 +1396,9 @@ class Conv2dLayer(Layer):
                             (self.name, str(shape), str(strides), padding, act.__name__))
 
         with tf.variable_scope(name) as vs:
-            W = tf.get_variable(name='W_conv2d', shape=shape, initializer=W_init, **W_init_args )
+            W = tf.get_variable(name='W_conv2d', shape=shape, initializer=W_init, dtype=D_TYPE, **W_init_args )
             if b_init:
-                b = tf.get_variable(name='b_conv2d', shape=(shape[-1]), initializer=b_init, **b_init_args )
+                b = tf.get_variable(name='b_conv2d', shape=(shape[-1]), initializer=b_init, dtype=D_TYPE, **b_init_args )
                 self.outputs = act( tf.nn.conv2d(self.inputs, W, strides=strides, padding=padding, use_cudnn_on_gpu=use_cudnn_on_gpu, data_format=data_format) + b )
             else:
                 self.outputs = act( tf.nn.conv2d(self.inputs, W, strides=strides, padding=padding, use_cudnn_on_gpu=use_cudnn_on_gpu, data_format=data_format))
@@ -1383,9 +1502,9 @@ class DeConv2dLayer(Layer):
                             (self.name, str(shape), str(output_shape), str(strides), padding, act.__name__))
         # print("  DeConv2dLayer: Untested")
         with tf.variable_scope(name) as vs:
-            W = tf.get_variable(name='W_deconv2d', shape=shape, initializer=W_init, **W_init_args )
+            W = tf.get_variable(name='W_deconv2d', shape=shape, initializer=W_init, dtype=D_TYPE, **W_init_args )
             if b_init:
-                b = tf.get_variable(name='b_deconv2d', shape=(shape[-2]), initializer=b_init, **b_init_args )
+                b = tf.get_variable(name='b_deconv2d', shape=(shape[-2]), initializer=b_init, dtype=D_TYPE, **b_init_args )
                 self.outputs = act( tf.nn.conv2d_transpose(self.inputs, W, output_shape=output_shape, strides=strides, padding=padding) + b )
             else:
                 self.outputs = act( tf.nn.conv2d_transpose(self.inputs, W, output_shape=output_shape, strides=strides, padding=padding))
@@ -1446,8 +1565,8 @@ class Conv3dLayer(Layer):
         with tf.variable_scope(name) as vs:
             # W = tf.Variable(W_init(shape=shape, **W_init_args), name='W_conv')
             # b = tf.Variable(b_init(shape=[shape[-1]], **b_init_args), name='b_conv')
-            W = tf.get_variable(name='W_conv3d', shape=shape, initializer=W_init, **W_init_args )
-            b = tf.get_variable(name='b_conv3d', shape=(shape[-1]), initializer=b_init, **b_init_args )
+            W = tf.get_variable(name='W_conv3d', shape=shape, initializer=W_init, dtype=D_TYPE, **W_init_args )
+            b = tf.get_variable(name='b_conv3d', shape=(shape[-1]), initializer=b_init, dtype=D_TYPE, **b_init_args )
             self.outputs = act( tf.nn.conv3d(self.inputs, W, strides=strides, padding=padding, name=None) + b )
 
         # self.outputs = act( tf.nn.conv3d(self.inputs, W, strides=strides, padding=padding, name=None) + b )
@@ -1506,8 +1625,8 @@ class DeConv3dLayer(Layer):
                             (self.name, str(shape), str(output_shape), str(strides), padding, act.__name__))
 
         with tf.variable_scope(name) as vs:
-            W = tf.get_variable(name='W_deconv3d', shape=shape, initializer=W_init, **W_init_args )
-            b = tf.get_variable(name='b_deconv3d', shape=(shape[-2]), initializer=b_init, **b_init_args )
+            W = tf.get_variable(name='W_deconv3d', shape=shape, initializer=W_init, dtype=D_TYPE, **W_init_args )
+            b = tf.get_variable(name='b_deconv3d', shape=(shape[-2]), initializer=b_init, dtype=D_TYPE, **b_init_args )
 
             self.outputs = act( tf.nn.conv3d_transpose(self.inputs, W, output_shape=output_shape, strides=strides, padding=padding) + b )
 
@@ -1626,6 +1745,237 @@ class DownSampling2dLayer(Layer):
         self.all_layers.extend( [self.outputs] )
 
 
+# ## 2D deformable convolutional layer
+def _to_bc_h_w(x, x_shape):
+    """(b, h, w, c) -> (b*c, h, w)"""
+    x = tf.transpose(x, [0, 3, 1, 2])
+    x = tf.reshape(x, (-1, x_shape[1], x_shape[2]))
+    return x
+
+def _to_b_h_w_n_c(x, x_shape):
+    """(b*c, h, w, n) -> (b, h, w, n, c)"""
+    x = tf.reshape(
+        x, (-1, x_shape[4], x_shape[1], x_shape[2], x_shape[3]))
+    x = tf.transpose(x, [0, 2, 3, 4, 1])
+    return x
+
+def tf_repeat(a, repeats):
+    """TensorFlow version of np.repeat for 1D"""
+    # https://github.com/tensorflow/tensorflow/issues/8521
+    assert len(a.get_shape()) == 1
+
+    a = tf.expand_dims(a, -1)
+    a = tf.tile(a, [1, repeats])
+    a = tf_flatten(a)
+    return a
+
+def tf_batch_map_coordinates(inputs, coords):
+    """Batch version of tf_map_coordinates
+
+    Only supports 2D feature maps
+
+    Parameters
+    ----------
+    input : tf.Tensor. shape = (b*c, h, w)
+    coords : tf.Tensor. shape = (b*c, h, w, n, 2)
+
+    Returns
+    -------
+    tf.Tensor. shape = (b*c, h, w, n)
+    """
+
+    input_shape = inputs.get_shape()
+    coords_shape = coords.get_shape()
+    batch_channel = tf.shape(inputs)[0]
+    input_h = int(input_shape[1])
+    input_w = int(input_shape[2])
+    kernel_n = int(coords_shape[3])
+    n_coords = input_h * input_w * kernel_n
+
+    coords_lt = tf.cast(tf.floor(coords), 'int32')
+    coords_rb = tf.cast(tf.ceil(coords), 'int32')
+    coords_lb = tf.stack([coords_lt[:, :, :, :, 0], coords_rb[:, :, :, :, 1]], axis=-1)
+    coords_rt = tf.stack([coords_rb[:, :, :, :, 0], coords_lt[:, :, :, :, 1]], axis=-1)
+
+    idx = tf_repeat(tf.range(batch_channel), n_coords)
+
+    vals_lt = _get_vals_by_coords(inputs, coords_lt, idx, (batch_channel, input_h, input_w, kernel_n))
+    vals_rb = _get_vals_by_coords(inputs, coords_rb, idx, (batch_channel, input_h, input_w, kernel_n))
+    vals_lb = _get_vals_by_coords(inputs, coords_lb, idx, (batch_channel, input_h, input_w, kernel_n))
+    vals_rt = _get_vals_by_coords(inputs, coords_rt, idx, (batch_channel, input_h, input_w, kernel_n))
+
+    coords_offset_lt = coords - tf.cast(coords_lt, 'float32')
+
+    vals_t = vals_lt + (vals_rt - vals_lt) * coords_offset_lt[:, :, :, :, 0]
+    vals_b = vals_lb + (vals_rb - vals_lb) * coords_offset_lt[:, :, :, :, 0]
+    mapped_vals = vals_t + (vals_b - vals_t) * coords_offset_lt[:, :, :, :, 1]
+
+    return mapped_vals
+
+def tf_batch_map_offsets(inputs, offsets, grid_offset):
+    """Batch map offsets into input
+
+    Parameters
+    ---------
+    inputs : tf.Tensor. shape = (b, h, w, c)
+    offsets: tf.Tensor. shape = (b, h, w, 2*n)
+    grid_offset: Offset grids shape = (h, w, n, 2)
+
+    Returns
+    -------
+    tf.Tensor. shape = (b, h, w, c)
+    """
+
+    input_shape = inputs.get_shape()
+    batch_size = tf.shape(inputs)[0]
+    kernel_n = int(int(offsets.get_shape()[3])/2)
+    input_h = input_shape[1]
+    input_w = input_shape[2]
+    channel = input_shape[3]
+
+    # inputs (b, h, w, c) --> (b*c, h, w)
+    inputs = _to_bc_h_w(inputs, input_shape)
+
+    # offsets (b, h, w, 2*n) --> (b, h, w, n, 2)
+    offsets = tf.reshape(offsets, (batch_size, input_h, input_w, kernel_n, 2))
+    # offsets (b, h, w, n, 2) --> (b*c, h, w, n, 2)
+    # offsets = tf.tile(offsets, [channel, 1, 1, 1, 1])
+
+    coords = tf.expand_dims(grid_offset, 0)  # grid_offset --> (1, h, w, n, 2)
+    coords = tf.tile(coords, [batch_size, 1, 1, 1, 1]) + offsets  # grid_offset --> (b, h, w, n, 2)
+
+    # clip out of bound
+    coords = tf.stack([tf.clip_by_value(coords[:, :, :, :, 0], 0.0, tf.cast(input_h - 1, 'float32')),
+                       tf.clip_by_value(coords[:, :, :, :, 1], 0.0, tf.cast(input_w - 1, 'float32'))], axis=-1)
+    coords = tf.tile(coords, [channel, 1, 1, 1, 1])
+
+    mapped_vals = tf_batch_map_coordinates(inputs, coords)
+    # (b*c, h, w, n) --> (b, h, w, n, c)
+    mapped_vals = _to_b_h_w_n_c(mapped_vals, [batch_size, input_h, input_w, kernel_n, channel])
+
+    return mapped_vals
+
+class DeformableConv2dLayer(Layer):
+    """The :class:`DeformableConv2dLayer` class is a
+    `Deformable Convolutional Networks <https://arxiv.org/abs/1703.06211>`_ .
+
+    Parameters
+    -----------
+    layer : TensorLayer layer.
+    offset_layer : TensorLayer layer, to predict the offset of convolutional operations. The shape of its output should be (batchsize, input height, input width, 2*(number of element in the convolutional kernel))
+        e.g. if apply a 3*3 kernel, the number of the last dimension should be 18 (2*3*3)
+    channel_multiplier : int, The number of channels to expand to.
+    filter_size : tuple (height, width) for filter size.
+    strides : tuple (height, width) for strides. Current implementation fix to (1, 1, 1, 1)
+    act : None or activation function.
+    shape : list of shape
+        shape of the filters, [filter_height, filter_width, in_channels, out_channels].
+    W_init : weights initializer
+        The initializer for initializing the weight matrix.
+    b_init : biases initializer or None
+        The initializer for initializing the bias vector. If None, skip biases.
+    W_init_args : dictionary
+        The arguments for the weights tf.get_variable().
+    b_init_args : dictionary
+        The arguments for the biases tf.get_variable().
+    name : a string or None
+        An optional name to attach to this layer.
+
+    Examples
+    --------
+    >>> network = tl.layers.InputLayer(x, name='input_layer')
+    >>> offset_1 = tl.layers.Conv2dLayer(layer=network, act=act, shape=[3, 3, 3, 18], strides=[1, 1, 1, 1],padding='SAME', name='offset_layer1')
+    >>> network = tl.layers.DeformableConv2dLayer(layer=network, act=act, offset_layer=offset_1,  shape=[3, 3, 3, 32],  name='deformable_conv_2d_layer1')
+    >>> offset_2 = tl.layers.Conv2dLayer(layer=network, act=act, shape=[3, 3, 32, 18], strides=[1, 1, 1, 1], padding='SAME', name='offset_layer2')
+    >>> network = tl.layers.DeformableConv2dLayer(layer=network, act = act, offset_layer=offset_2, shape=[3, 3, 32, 64], name='deformable_conv_2d_layer2')
+
+    References
+    -----------
+    - The deformation operation was adapted from the implementation in `<https://github.com/felixlaumon/deform-conv>`_
+
+    Notes
+    -----------
+    - The stride is fixed as (1, 1, 1, 1).
+    - The padding is fixed as 'SAME'.
+    - The current implementation is memory-inefficient, please use carefully.
+    """
+    def __init__(
+            self,
+            layer=None,
+            act=tf.identity,
+            offset_layer=None,
+            shape=[3, 3, 1, 100],
+            name='deformable_conv_2d_layer',
+            W_init=tf.truncated_normal_initializer(stddev=0.02),
+            b_init=tf.constant_initializer(value=0.0),
+            W_init_args={},
+            b_init_args={}
+    ):
+        if tf.__version__ < "1.4":
+            raise Exception("Deformable CNN layer requires tensrflow 1.4 or higher version")
+
+        Layer.__init__(self, name=name)
+        self.inputs = layer.outputs
+        self.offset_layer = offset_layer
+
+        print("  [TL] DeformableConv2dLayer %s: shape:%s, act:%s" %
+              (self.name, str(shape), act.__name__))
+
+        with tf.variable_scope(name) as vs:
+
+            offset = self.offset_layer.outputs
+            assert offset.get_shape()[-1] == 2 * shape[0] * shape[1]
+
+            ## Grid initialisation
+            input_h = int(self.inputs.get_shape()[1])
+            input_w = int(self.inputs.get_shape()[2])
+            kernel_n = shape[0] * shape[1]
+            initial_offsets = tf.stack(tf.meshgrid(tf.range(shape[0]),
+                                                   tf.range(shape[1]),
+                                                   indexing='ij'))  # initial_offsets --> (kh, kw, 2)
+            initial_offsets = tf.reshape(initial_offsets, (-1, 2))  # initial_offsets --> (n, 2)
+            initial_offsets = tf.expand_dims(initial_offsets, 0)  # initial_offsets --> (1, n, 2)
+            initial_offsets = tf.expand_dims(initial_offsets, 0)  # initial_offsets --> (1, 1, n, 2)
+            initial_offsets = tf.tile(initial_offsets, [input_h, input_w, 1, 1])  # initial_offsets --> (h, w, n, 2)
+            initial_offsets = tf.cast(initial_offsets, 'float32')
+            grid = tf.meshgrid(
+                tf.range(- int((shape[0] - 1)/2.0), int(input_h - int((shape[0] - 1)/2.0)), 1),
+                tf.range(- int((shape[1] - 1)/2.0), int(input_w - int((shape[1] - 1)/2.0)), 1), indexing='ij')
+
+            grid = tf.stack(grid, axis=-1)
+            grid = tf.cast(grid, 'float32')  # grid --> (h, w, 2)
+            grid = tf.expand_dims(grid, 2)  # grid --> (h, w, 1, 2)
+            grid = tf.tile(grid, [1, 1, kernel_n, 1])  # grid --> (h, w, n, 2)
+            grid_offset = grid + initial_offsets  # grid_offset --> (h, w, n, 2)
+
+            input_deform = tf_batch_map_offsets(self.inputs, offset, grid_offset)
+
+            W = tf.get_variable(name='W_conv2d', shape=[1, 1, shape[0] * shape[1], shape[-2], shape[-1]],
+                              initializer=W_init, dtype=D_TYPE, **W_init_args)
+            b = tf.get_variable(name='b_conv2d', shape=(shape[-1]),
+                                initializer=b_init, dtype=D_TYPE, **b_init_args)
+
+            self.outputs = tf.reshape(act(
+                tf.nn.conv3d(input_deform, W, strides=[1, 1, 1, 1, 1], padding='VALID', name=None) + b),
+                (tf.shape(self.inputs)[0], input_h, input_w, shape[-1]))
+
+        ## fixed
+        self.all_layers = list(layer.all_layers)
+        self.all_params = list(layer.all_params)
+        self.all_drop = dict(layer.all_drop)
+
+        ## offset_layer
+        offset_params = [osparam for osparam in offset_layer.all_params if osparam not in layer.all_params]
+        offset_layers = [oslayer for oslayer in offset_layer.all_layers if oslayer not in layer.all_layers]
+
+        self.all_params.extend(offset_params)
+        self.all_layers.extend(offset_layers)
+        self.all_drop.update(offset_layer.all_drop)
+
+        ## this layer
+        self.all_layers.extend([self.outputs])
+        self.all_params.extend([W, b])
+
 def AtrousConv1dLayer(net, n_filter=32, filter_size=2, stride=1, dilation=1, act=None,
         padding='SAME', use_cudnn_on_gpu=None,data_format='NWC',
         W_init = tf.truncated_normal_initializer(stddev=0.02),
@@ -1661,7 +2011,6 @@ def AtrousConv1dLayer(net, n_filter=32, filter_size=2, stride=1, dilation=1, act
         )
     return net
 
-
 class AtrousConv2dLayer(Layer):
     """The :class:`AtrousConv2dLayer` class is Atrous convolution (a.k.a. convolution with holes or dilated convolution) 2D layer, see `tf.nn.atrous_conv2d <https://www.tensorflow.org/versions/master/api_docs/python/nn.html#atrous_conv2d>`_.
 
@@ -1696,15 +2045,15 @@ class AtrousConv2dLayer(Layer):
     ):
         Layer.__init__(self, name=name)
         self.inputs = layer.outputs
-        print("  [TL] AtrousConv2dLayer %s: n_filter:%d filter_size:%s rate:%d pad:%s act:%s" %
-                            (self.name, n_filter, filter_size, rate, padding, act.__name__))
         if act is None:
             act = tf.identity
+        print("  [TL] AtrousConv2dLayer %s: n_filter:%d filter_size:%s rate:%d pad:%s act:%s" %
+                            (self.name, n_filter, filter_size, rate, padding, act.__name__))
         with tf.variable_scope(name) as vs:
             shape = [filter_size[0], filter_size[1], int(self.inputs.get_shape()[-1]), n_filter]
-            filters = tf.get_variable(name='filter', shape=shape, initializer=W_init, **W_init_args )
+            filters = tf.get_variable(name='filter', shape=shape, initializer=W_init, dtype=D_TYPE, **W_init_args )
             if b_init:
-                b = tf.get_variable(name='b', shape=(n_filter), initializer=b_init, **b_init_args )
+                b = tf.get_variable(name='b', shape=(n_filter), initializer=b_init, dtype=D_TYPE, **b_init_args )
                 self.outputs = act(tf.nn.atrous_conv2d(self.inputs, filters, rate, padding) + b)
             else:
                 self.outputs = act(tf.nn.atrous_conv2d(self.inputs, filters, rate, padding))
@@ -1792,6 +2141,7 @@ class SeparableConv2dLayer(Layer):# Untested
         self.all_layers.extend( [self.outputs] )
         self.all_params.extend( variables )
 
+
 ## Initializers for Convuolutional Layers
 def deconv2d_bilinear_upsampling_initializer(shape):
     """Returns initializer that can be passed to DeConv2dLayer to initalize the
@@ -1851,7 +2201,7 @@ def deconv2d_bilinear_upsampling_initializer(shape):
         weights[:, :, i, i] = bilinear_kernel
 
     #assign numpy array to constant_initalizer and pass to get_variable
-    bilinear_weights_init = tf.constant_initializer(value=weights, dtype=tf.float32)
+    bilinear_weights_init = tf.constant_initializer(value=weights, dtype=D_TYPE) #dtype=tf.float32)
     return bilinear_weights_init
 
 ## Convolutional layer (Simplified)
@@ -1871,6 +2221,23 @@ def Conv1d(net, n_filter=32, filter_size=5, stride=1, dilation_rate=1, act=None,
     dilation_rate : As it is 1D conv, the default is "NWC".
     act : None or activation function.
     others : see :class:`Conv1dLayer`.
+
+    Examples
+    ---------
+    >>> x = tf.placeholder(tf.float32, [batch_size, width])
+    >>> y_ = tf.placeholder(tf.int64, shape=[batch_size,])
+    >>> n = InputLayer(x, name='in')
+    >>> n = ReshapeLayer(n, [-1, width, 1], name='rs')
+    >>> n = Conv1d(n, 64, 3, 1, act=tf.nn.relu, name='c1')
+    >>> n = MaxPool1d(n, 2, 2, padding='valid', name='m1')
+    >>> n = Conv1d(n, 128, 3, 1, act=tf.nn.relu, name='c2')
+    >>> n = MaxPool1d(n, 2, 2, padding='valid', name='m2')
+    >>> n = Conv1d(n, 128, 3, 1, act=tf.nn.relu, name='c3')
+    >>> n = MaxPool1d(n, 2, 2, padding='valid', name='m3')
+    >>> n = FlattenLayer(n, name='f')
+    >>> n = DenseLayer(n, 500, tf.nn.relu, name='d1')
+    >>> n = DenseLayer(n, 100, tf.nn.relu, name='d2')
+    >>> n = DenseLayer(n, 2, tf.identity, name='o')
     """
     if act is None:
         act = tf.identity
@@ -1959,14 +2326,14 @@ def DeConv2d(net, n_out_channel = 32, filter_size=(3, 3),
     assert len(strides) == 2, "len(strides) should be 2, DeConv2d and DeConv2dLayer are different."
     if act is None:
         act = tf.identity
-    # if batch_size is None:
+    if batch_size is None:
     #     batch_size = tf.shape(net.outputs)[0]
-    fixed_batch_size = net.outputs.get_shape().with_rank_at_least(1)[0]
-    if fixed_batch_size.value:
-        batch_size = fixed_batch_size.value
-    else:
-        from tensorflow.python.ops import array_ops
-        batch_size = array_ops.shape(net.outputs)[0]
+        fixed_batch_size = net.outputs.get_shape().with_rank_at_least(1)[0]
+        if fixed_batch_size.value:
+            batch_size = fixed_batch_size.value
+        else:
+            from tensorflow.python.ops import array_ops
+            batch_size = array_ops.shape(net.outputs)[0]
     net = DeConv2dLayer(layer = net,
                     act = act,
                     shape = [filter_size[0], filter_size[1], n_out_channel, int(net.outputs.get_shape()[-1])],
@@ -2112,10 +2479,108 @@ def MeanPool3d(net, filter_size, strides, padding='valid', data_format='channels
     net_new.all_layers.extend( [outputs] )
     return net_new
 
+class DepthwiseConv2d(Layer):
+    """Separable/Depthwise Convolutional 2D, see `tf.nn.depthwise_conv2d <https://www.tensorflow.org/versions/master/api_docs/python/tf/nn/depthwise_conv2d>`_.
+
+    Input:
+        4-D Tensor [batch, height, width, in_channels].
+    Output:
+        4-D Tensor [batch, new height, new width, in_channels * channel_multiplier].
+
+    Parameters
+    ------------
+    net : TensorLayer layer.
+    channel_multiplier : int, The number of channels to expand to.
+    filter_size : tuple (height, width) for filter size.
+    strides : tuple (height, width) for strides.
+    act : None or activation function.
+    padding : a string from: "SAME", "VALID".
+        The type of padding algorithm to use.
+    W_init : weights initializer
+        The initializer for initializing the weight matrix.
+    b_init : biases initializer or None
+        The initializer for initializing the bias vector. If None, skip biases.
+    W_init_args : dictionary
+        The arguments for the weights tf.get_variable().
+    b_init_args : dictionary
+        The arguments for the biases tf.get_variable().
+    name : a string or None
+        An optional name to attach to this layer.
+
+    Examples
+    ---------
+    >>> t_im = tf.placeholder("float32", [None, 256, 256, 3])
+    >>> net = InputLayer(t_im, name='in')
+    >>> net = DepthwiseConv2d(net, 32, (3, 3), (1, 1, 1, 1), tf.nn.relu, padding="SAME", name='dep')
+    >>> print(net.outputs.get_shape())
+    ... (?, 256, 256, 96)
+
+    References
+    -----------
+    - tflearn's `grouped_conv_2d <https://github.com/tflearn/tflearn/blob/3e0c3298ff508394f3ef191bcd7d732eb8860b2e/tflearn/layers/conv.py>`_
+    - keras's `separableconv2d <https://keras.io/layers/convolutional/#separableconv2d>`_
+    """
+    def __init__(
+        self,
+        layer = None,
+        # n_filter = 32,
+        channel_multiplier = 3,
+        shape = (3, 3),
+        strides = (1, 1),
+        act = None,
+        padding='SAME',
+        W_init = tf.truncated_normal_initializer(stddev=0.02),
+        b_init = tf.constant_initializer(value=0.0),
+        W_init_args = {},
+        b_init_args = {},
+        name ='depthwise_conv2d',
+    ):
+        Layer.__init__(self, name=name)
+        self.inputs = layer.outputs
+
+        if act is None:
+            act = tf.identity
+
+        print("  [TL] DepthwiseConv2d %s: shape:%s strides:%s pad:%s act:%s" %
+                            (self.name, str(shape), str(strides), padding, act.__name__))
+
+        if act is None:
+            act = tf.identity
+
+        try:
+            pre_channel = int(layer.outputs.get_shape()[-1])
+        except: # if pre_channel is ?, it happens when using Spatial Transformer Net
+            pre_channel = 1
+            print("[warnings] unknow input channels, set to 1")
+
+        shape = [shape[0], shape[1], pre_channel, channel_multiplier]
+
+        if len(strides) == 2:
+            strides = [1, strides[0], strides[1], 1]
+
+        assert len(strides) == 4, "len(strides) should be 4."
+
+        with tf.variable_scope(name) as vs:
+            W = tf.get_variable(name='W_sepconv2d', shape=shape, initializer=W_init, dtype=D_TYPE, **W_init_args ) # [filter_height, filter_width, in_channels, channel_multiplier]
+            if b_init:
+                b = tf.get_variable(name='b_sepconv2d', shape=(pre_channel*channel_multiplier), initializer=b_init, dtype=D_TYPE, **b_init_args )
+                self.outputs = act( tf.nn.depthwise_conv2d(self.inputs, W, strides=strides, padding=padding) + b )
+            else:
+                self.outputs = act( tf.nn.depthwise_conv2d(self.inputs, W, strides=strides, padding=padding) )
+
+        self.all_layers = list(layer.all_layers)
+        self.all_params = list(layer.all_params)
+        self.all_drop = dict(layer.all_drop)
+        self.all_layers.extend( [self.outputs] )
+        if b_init:
+            self.all_params.extend( [W, b] )
+        else:
+            self.all_params.extend( [W] )
+
 ## Super resolution
 def SubpixelConv2d(net, scale=2, n_out_channel=None, act=tf.identity, name='subpixel_conv2d'):
-    """The :class:`SubpixelConv2d` class is a sub-pixel 2d convolutional ayer, usually be used
-    for Super-Resolution applications, `example code <https://github.com/zsdonghao/SRGAN/>`_.
+    """It is a sub-pixel 2d upsampling layer, usually be used
+    for Super-Resolution applications, see `example code <https://github.com/zsdonghao/SRGAN/>`_.
 
     Parameters
     ------------
@@ -2165,16 +2630,21 @@ def SubpixelConv2d(net, scale=2, n_out_channel=None, act=tf.identity, name='subp
 
     scope_name = tf.get_variable_scope().name
     if scope_name:
-        name = scope_name + '/' + name
+        whole_name = scope_name + '/' + name
+    else:
+        whole_name = name
 
     def _PS(X, r, n_out_channel):
         if n_out_channel >= 1:
             assert int(X.get_shape()[-1]) == (r ** 2) * n_out_channel, _err_log
+            '''
             bsize, a, b, c = X.get_shape().as_list()
             bsize = tf.shape(X)[0] # Handling Dimension(None) type for undefined batch dim
             Xs=tf.split(X,r,3) #b*h*w*r*r
             Xr=tf.concat(Xs,2) #b*h*(r*w)*r
             X=tf.reshape(Xr,(bsize,r*a,r*b,n_out_channel)) # b*(r*h)*(r*w)*c
+            '''
+            X=tf.depth_to_space(X,r)
         else:
             print(_err_log)
         return X
@@ -2187,7 +2657,7 @@ def SubpixelConv2d(net, scale=2, n_out_channel=None, act=tf.identity, name='subp
 
     print("  [TL] SubpixelConv2d  %s: scale: %d n_out_channel: %s act: %s" % (name, scale, n_out_channel, act.__name__))
 
-    net_new = Layer(inputs, name=name)
+    net_new = Layer(inputs, name=whole_name)
     # with tf.name_scope(name):
     with tf.variable_scope(name) as vs:
         net_new.outputs = act(_PS(inputs, r=scale, n_out_channel=n_out_channel))
@@ -2199,7 +2669,7 @@ def SubpixelConv2d(net, scale=2, n_out_channel=None, act=tf.identity, name='subp
     return net_new
 
 def SubpixelConv2d_old(net, scale=2, n_out_channel=None, act=tf.identity, name='subpixel_conv2d'):
-    """The :class:`SubpixelConv2d` class is a sub-pixel 2d convolutional ayer, usually be used
+    """It is a sub-pixel 2d upsampling layer, usually be used
     for Super-Resolution applications, `example code <https://github.com/zsdonghao/SRGAN/>`_.
 
     Parameters
@@ -2252,31 +2722,12 @@ def SubpixelConv2d_old(net, scale=2, n_out_channel=None, act=tf.identity, name='
     if scope_name:
         name = scope_name + '/' + name
 
-    def _phase_shift(I, r):
-        if tf.__version__ < '1.0':
-            raise Exception("Only support TF1.0+")
-        bsize, a, b, c = I.get_shape().as_list()
-        bsize = tf.shape(I)[0] # Handling Dimension(None) type for undefined batch dim
-        X = tf.reshape(I, (bsize, a, b, r, r))
-        X = tf.transpose(X, (0, 1, 2, 4, 3))  # bsize, a, b, 1, 1 # tf 0.12
-        # X = tf.split(1, a, X)  # a, [bsize, b, r, r] # tf 0.12
-        X = tf.split(X, a, 1)
-        # X = tf.concat(2, [tf.squeeze(x, axis=1) for x in X])  # bsize, b, a*r, r # tf 0.12
-        X = tf.concat([tf.squeeze(x, axis=1) for x in X], 2)
-        # X = tf.split(1, b, X)  # b, [bsize, a*r, r] # tf 0.12
-        X = tf.split(X, b, 1)
-        # X = tf.concat(2, [tf.squeeze(x, axis=1) for x in X])  # bsize, a*r, b*r # tf 0.12
-        X = tf.concat([tf.squeeze(x, axis=1) for x in X], 2)
-        return tf.reshape(X, (bsize, a*r, b*r, 1))
-
     def _PS(X, r, n_out_channel):
         if n_out_channel > 1:
             assert int(X.get_shape()[-1]) == (r ** 2) * n_out_channel, _err_log
-            Xc = tf.split(X, n_out_channel, 3)
-            X = tf.concat([_phase_shift(x, r) for x in Xc], 3)
-        elif n_out_channel == 1:
-            assert int(X.get_shape()[-1]) == (r ** 2), _err_log
-            X = _phase_shift(X, r)
+            X=tf.transpose(X,[0,2,1,3])
+            X=tf.depth_to_space(X,r)
+            X=tf.transpose(X,[0,2,1,3])
         else:
             print(_err_log)
         return X
@@ -2301,7 +2752,49 @@ def SubpixelConv2d_old(net, scale=2, n_out_channel=None, act=tf.identity, name='
     return net_new
 
 
+def SubpixelConv1d(net, scale=2, act=tf.identity, name='subpixel_conv1d'):
+    """One-dimensional subpixel upsampling layer.
+    Calls a tensorflow function that directly implements this functionality.
+    We assume input has dim (batch, width, r)
 
+    Parameters
+    ------------
+    net : TensorLayer layer.
+    scale : int, upscaling ratio, a wrong setting will lead to Dimension size error.
+    act : activation function.
+    name : string.
+        An optional name to attach to this layer.
+
+    Examples
+    ----------
+    >>> t_signal = tf.placeholder('float32', [10, 100, 4], name='x')
+    >>> n = InputLayer(t_signal, name='in')
+    >>> n = SubpixelConv1d(n, scale=2, name='s')
+    >>> print(n.outputs.shape)
+    ... (10, 200, 2)
+
+    References
+    -----------
+    - `Audio Super Resolution Implementation <https://github.com/kuleshov/audio-super-res/blob/master/src/models/layers/subpixel.py>`_.
+    """
+    def _PS(I, r):
+        X = tf.transpose(I, [2,1,0]) # (r, w, b)
+        X = tf.batch_to_space_nd(X, [r], [[0,0]]) # (1, r*w, b)
+        X = tf.transpose(X, [2,1,0])
+        return X
+
+    print("  [TL] SubpixelConv1d  %s: scale: %d act: %s" % (name, scale, act.__name__))
+
+    inputs = net.outputs
+    net_new = Layer(inputs, name=name)
+    with tf.name_scope(name):
+        net_new.outputs = act(_PS(inputs, r=scale))
+
+    net_new.all_layers = list(net.all_layers)
+    net_new.all_params = list(net.all_params)
+    net_new.all_drop = dict(net.all_drop)
+    net_new.all_layers.extend( [net_new.outputs] )
+    return net_new
 
 ## Spatial Transformer Nets
 def transformer(U, theta, out_size, name='SpatialTransformer2dAffine', **kwargs):
@@ -2521,10 +3014,10 @@ class SpatialTransformer2dAffineLayer(Layer):
             # 2.1 W
             n_in = int(self.theta_layer.outputs.get_shape()[-1])
             shape = (n_in, 6)
-            W = tf.get_variable(name='W', initializer=tf.zeros(shape))
+            W = tf.get_variable(name='W', initializer=tf.zeros(shape), dtype=D_TYPE)
             # 2.2 b
             identity = tf.constant(np.array([[1., 0, 0], [0, 1., 0]]).astype('float32').flatten())
-            b = tf.get_variable(name='b', initializer=identity)
+            b = tf.get_variable(name='b', initializer=identity, dtype=D_TYPE)
             # 2.3 transformation matrix
             self.theta = tf.nn.tanh(tf.matmul(self.theta_layer.outputs, W) + b)
             ## 3. Spatial Transformer Sampling
@@ -2620,6 +3113,7 @@ class BatchNormLayer(Layer):
         The initializer for initializing beta
     gamma_init : gamma initializer
         The initializer for initializing gamma
+    dtype : tf.float32 (default) or tf.float16
     name : a string or None
         An optional name to attach to this layer.
 
@@ -2637,6 +3131,7 @@ class BatchNormLayer(Layer):
         is_train = False,
         beta_init = tf.zeros_initializer,
         gamma_init = tf.random_normal_initializer(mean=1.0, stddev=0.002), # tf.ones_initializer,
+        # dtype = tf.float32,
         name ='batchnorm_layer',
     ):
         Layer.__init__(self, name=name)
@@ -2657,10 +3152,13 @@ class BatchNormLayer(Layer):
                 beta_init = beta_init()
             beta = tf.get_variable('beta', shape=params_shape,
                                initializer=beta_init,
+                               dtype=D_TYPE,
                                trainable=is_train)#, restore=restore)
 
             gamma = tf.get_variable('gamma', shape=params_shape,
-                                initializer=gamma_init, trainable=is_train,
+                                initializer=gamma_init,
+                                dtype=D_TYPE,
+                                trainable=is_train,
                                 )#restore=restore)
 
             ## 2.
@@ -2671,10 +3169,12 @@ class BatchNormLayer(Layer):
             moving_mean = tf.get_variable('moving_mean',
                                       params_shape,
                                       initializer=moving_mean_init,
-                                      trainable=False,)#   restore=restore)
+                                      dtype=D_TYPE,
+                                      trainable=False)#   restore=restore)
             moving_variance = tf.get_variable('moving_variance',
                                           params_shape,
                                           initializer=tf.constant_initializer(1.),
+                                          dtype=D_TYPE,
                                           trainable=False,)#   restore=restore)
 
             ## 3.
@@ -3431,6 +3931,107 @@ class BatchNormLayer(Layer):
 #         self.all_layers.extend( [self.outputs] )
 #         self.all_params.extend( [beta, gamma] )
 
+class InstanceNormLayer(Layer):
+    """The :class:`InstanceNormLayer` class is a for instance normalization.
+
+    Parameters
+    -----------
+    layer : a :class:`Layer` instance
+        The `Layer` class feeding into this layer.
+    act : activation function.
+    epsilon : float
+        A small float number.
+    scale_init : beta initializer
+        The initializer for initializing beta
+    offset_init : gamma initializer
+        The initializer for initializing gamma
+    name : a string or None
+        An optional name to attach to this layer.
+    """
+    def __init__(
+    self,
+    layer = None,
+    act = tf.identity,
+    epsilon = 1e-5,
+    scale_init = tf.truncated_normal_initializer(mean=1.0, stddev=0.02),
+    offset_init = tf.constant_initializer(0.0),
+    name ='instan_norm',
+    ):
+        Layer.__init__(self, name=name)
+        self.inputs = layer.outputs
+        print("  [TL] InstanceNormLayer %s: epsilon:%f act:%s" %
+                            (self.name, epsilon, act.__name__))
+
+        with tf.variable_scope(name) as vs:
+            mean, var = tf.nn.moments(self.inputs, [1, 2], keep_dims=True)
+            scale = tf.get_variable('scale',[self.inputs.get_shape()[-1]],
+                initializer=tf.truncated_normal_initializer(mean=1.0, stddev=0.02), dtype=D_TYPE)
+            offset = tf.get_variable('offset',[self.inputs.get_shape()[-1]],
+                initializer=tf.constant_initializer(0.0), dtype=D_TYPE)
+            self.outputs = scale * tf.div(self.inputs-mean, tf.sqrt(var+epsilon)) + offset
+            self.outputs = act(self.outputs)
+            variables = tf.get_collection(TF_GRAPHKEYS_VARIABLES, scope=vs.name)
+
+        self.all_layers = list(layer.all_layers)
+        self.all_params = list(layer.all_params)
+        self.all_drop = dict(layer.all_drop)
+        self.all_layers.extend( [self.outputs] )
+        self.all_params.extend( variables )
+
+class LayerNormLayer(Layer):
+    """
+    The :class:`LayerNormLayer` class is for layer normalization, see `tf.contrib.layers.layer_norm <https://www.tensorflow.org/api_docs/python/tf/contrib/layers/layer_norm>`_.
+
+    Parameters
+    ----------
+    layer : a :class:`Layer` instance
+        The `Layer` class feeding into this layer.
+    act : activation function
+        The function that is applied to the layer activations.
+    others : see  `tf.contrib.layers.layer_norm <https://www.tensorflow.org/api_docs/python/tf/contrib/layers/layer_norm>`_
+    """
+    def __init__(self,
+                layer=None,
+                center=True,
+                scale=True,
+                act=tf.identity,
+                reuse=None,
+                variables_collections=None,
+                outputs_collections=None,
+                trainable=True,
+                begin_norm_axis=1,
+                begin_params_axis=-1,
+                name='layernorm'
+                ):
+
+        if tf.__version__ < "1.3":
+            raise Exception("Please use TF 1.3+")
+
+        Layer.__init__(self, name=name)
+        self.inputs = layer.outputs
+        print("  [TL] LayerNormLayer %s: act:%s" %
+                            (self.name, act.__name__))
+        with tf.variable_scope(name) as vs:
+            self.outputs = tf.contrib.layers.layer_norm(self.inputs,
+                center=center,
+                scale=scale,
+                activation_fn=act,
+                reuse=reuse,
+                variables_collections=variables_collections,
+                outputs_collections=outputs_collections,
+                trainable=trainable,
+                begin_norm_axis=begin_norm_axis,
+                begin_params_axis=begin_params_axis,
+                scope='var',
+                )
+            variables = tf.get_collection(TF_GRAPHKEYS_VARIABLES, scope=vs.name)
+
+        self.all_layers = list(layer.all_layers)
+        self.all_params = list(layer.all_params)
+        self.all_drop = dict(layer.all_drop)
+        self.all_layers.extend( [self.outputs] )
+        self.all_params.extend( variables )
+
 ## Pooling layer
 class PoolLayer(Layer):
     """
@@ -3508,7 +4109,7 @@ class PadLayer(Layer):
         assert paddings is not None, "paddings should be a Tensor of type int32. see https://www.tensorflow.org/api_docs/python/tf/pad"
         self.inputs = layer.outputs
         print("  [TL] PadLayer   %s: paddings:%s mode:%s" %
-                            (self.name, list(paddings.get_shape()), mode))
+                            (self.name, list(paddings), mode))
 
         self.outputs = tf.pad(self.inputs, paddings=paddings, mode=mode, name=name)
 
@@ -3516,6 +4117,49 @@ class PadLayer(Layer):
         self.all_params = list(layer.all_params)
         self.all_drop = dict(layer.all_drop)
         self.all_layers.extend( [self.outputs] )
+
+## Object Detection
+class ROIPoolingLayer(Layer):
+    """
+    The :class:`ROIPoolingLayer` class is Region of interest pooling layer.
+
+    Parameters
+    -----------
+    layer : a :class:`Layer` instance
+        The `Layer` class feeding into this layer, the feature maps on which to perform the pooling operation
+    rois : list of regions of interest in the format (feature map index, upper left, bottom right)
+    pool_width : int, size of the pooling sections.
+    pool_width : int, size of the pooling sections.
+
+    Notes
+    -----------
+    - This implementation is from `Deepsense-AI <https://github.com/deepsense-ai/roi-pooling>`_ .
+    - Please install it by the instruction `HERE <https://github.com/zsdonghao/tensorlayer/blob/master/tensorlayer/third_party/roi_pooling/README.md>`_.
+    """
+    def __init__(
+        self,
+        #inputs = None,
+        layer = None,
+        rois = None,
+        pool_height = 2,
+        pool_width = 2,
+        name = 'roipooling_layer',
+    ):
+        Layer.__init__(self, name=name)
+        self.inputs = layer.outputs
+        print ("  [TL] ROIPoolingLayer %s: (%d, %d)" % (self.name, pool_height, pool_width))
+        try:
+            from tensorlayer.third_party.roi_pooling.roi_pooling.roi_pooling_ops import roi_pooling
+        except Exception as e:
+            print(e)
+            print("\nHINT: \n1. https://github.com/deepsense-ai/roi-pooling  \n2. tensorlayer/third_party/roi_pooling\n")
+        self.outputs = roi_pooling(self.inputs, rois, pool_height, pool_width)
+
+        self.all_layers = list(layer.all_layers)
+        self.all_params = list(layer.all_params)
+        self.all_drop = dict(layer.all_drop)
+        self.all_layers.extend( [self.outputs] )
+
 
 ## TimeDistributedLayer
 class TimeDistributedLayer(Layer):
@@ -3576,8 +4220,8 @@ class TimeDistributedLayer(Layer):
 
         with ops.suppress_stdout():
             for i in range(0, timestep):
-                with tf.variable_scope(name, reuse=(False if i==0 else True)) as vs:
-                    set_name_reuse((False if i==0 else True))
+                with tf.variable_scope(name, reuse=(set_keep['name_reuse'] if i==0 else True)) as vs:
+                    set_name_reuse((set_keep['name_reuse'] if i==0 else True))
                     net = layer_class(InputLayer(x[i], name=args['name']+str(i)), **args)
                     # net = layer_class(InputLayer(x[i], name="input_"+args['name']), **args)
                     x[i] = net.outputs
@@ -3607,11 +4251,11 @@ class RNNLayer(Layer):
         - see `RNN Cells in TensorFlow <https://www.tensorflow.org/api_docs/python/>`_
     cell_init_args : a dictionary
         The arguments for the cell initializer.
-    n_hidden : a int
+    n_hidden : an int
         The number of hidden units in the layer.
     initializer : initializer
         The initializer for initializing the parameters.
-    n_steps : a int
+    n_steps : an int
         The sequence length.
     initial_state : None or RNN State
         If None, initial_state is zero_state.
@@ -3626,7 +4270,7 @@ class RNNLayer(Layer):
     name : a string or None
         An optional name to attach to this layer.
 
-    Variables
+    Attributes
     --------------
     outputs : a tensor
         The output of this RNN.
@@ -3652,27 +4296,25 @@ class RNNLayer(Layer):
     --------
     - For words
     >>> input_data = tf.placeholder(tf.int32, [batch_size, num_steps])
-    >>> network = tl.layers.EmbeddingInputlayer(
+    >>> net = tl.layers.EmbeddingInputlayer(
     ...                 inputs = input_data,
     ...                 vocabulary_size = vocab_size,
     ...                 embedding_size = hidden_size,
     ...                 E_init = tf.random_uniform_initializer(-init_scale, init_scale),
     ...                 name ='embedding_layer')
-    >>> if is_training:
-    >>>     network = tl.layers.DropoutLayer(network, keep=keep_prob, name='drop1')
-    >>> network = tl.layers.RNNLayer(network,
-    ...             cell_fn=tf.nn.rnn_cell.BasicLSTMCell,
+    >>> net = tl.layers.DropoutLayer(net, keep=keep_prob, is_fix=True, is_train=is_train, name='drop1')
+    >>> net = tl.layers.RNNLayer(net,
+    ...             cell_fn=tf.contrib.rnn.BasicLSTMCell,
     ...             cell_init_args={'forget_bias': 0.0},# 'state_is_tuple': True},
     ...             n_hidden=hidden_size,
     ...             initializer=tf.random_uniform_initializer(-init_scale, init_scale),
     ...             n_steps=num_steps,
     ...             return_last=False,
     ...             name='basic_lstm_layer1')
-    >>> lstm1 = network
-    >>> if is_training:
-    >>>     network = tl.layers.DropoutLayer(network, keep=keep_prob, name='drop2')
-    >>> network = tl.layers.RNNLayer(network,
-    ...             cell_fn=tf.nn.rnn_cell.BasicLSTMCell,
+    >>> lstm1 = net
+    >>> net = tl.layers.DropoutLayer(net, keep=keep_prob, is_fix=True, is_train=is_train, name='drop2')
+    >>> net = tl.layers.RNNLayer(net,
+    ...             cell_fn=tf.contrib.rnn.BasicLSTMCell,
     ...             cell_init_args={'forget_bias': 0.0}, # 'state_is_tuple': True},
     ...             n_hidden=hidden_size,
     ...             initializer=tf.random_uniform_initializer(-init_scale, init_scale),
@@ -3680,10 +4322,9 @@ class RNNLayer(Layer):
     ...             return_last=False,
     ...             return_seq_2d=True,
     ...             name='basic_lstm_layer2')
-    >>> lstm2 = network
-    >>> if is_training:
-    >>>     network = tl.layers.DropoutLayer(network, keep=keep_prob, name='drop3')
-    >>> network = tl.layers.DenseLayer(network,
+    >>> lstm2 = net
+    >>> net = tl.layers.DropoutLayer(net, keep=keep_prob, is_fix=True, is_train=is_train, name='drop3')
+    >>> net = tl.layers.DenseLayer(net,
     ...             n_units=vocab_size,
     ...             W_init=tf.random_uniform_initializer(-init_scale, init_scale),
     ...             b_init=tf.random_uniform_initializer(-init_scale, init_scale),
@@ -3691,34 +4332,34 @@ class RNNLayer(Layer):
 
     - For CNN+LSTM
     >>> x = tf.placeholder(tf.float32, shape=[batch_size, image_size, image_size, 1])
-    >>> network = tl.layers.InputLayer(x, name='input_layer')
-    >>> network = tl.layers.Conv2dLayer(network,
+    >>> net = tl.layers.InputLayer(x, name='input_layer')
+    >>> net = tl.layers.Conv2dLayer(net,
     ...                         act = tf.nn.relu,
     ...                         shape = [5, 5, 1, 32],  # 32 features for each 5x5 patch
     ...                         strides=[1, 2, 2, 1],
     ...                         padding='SAME',
     ...                         name ='cnn_layer1')
-    >>> network = tl.layers.PoolLayer(network,
+    >>> net = tl.layers.PoolLayer(net,
     ...                         ksize=[1, 2, 2, 1],
     ...                         strides=[1, 2, 2, 1],
     ...                         padding='SAME',
     ...                         pool = tf.nn.max_pool,
     ...                         name ='pool_layer1')
-    >>> network = tl.layers.Conv2dLayer(network,
+    >>> net = tl.layers.Conv2dLayer(net,
     ...                         act = tf.nn.relu,
     ...                         shape = [5, 5, 32, 10], # 10 features for each 5x5 patch
     ...                         strides=[1, 2, 2, 1],
     ...                         padding='SAME',
     ...                         name ='cnn_layer2')
-    >>> network = tl.layers.PoolLayer(network,
+    >>> net = tl.layers.PoolLayer(net,
     ...                         ksize=[1, 2, 2, 1],
     ...                         strides=[1, 2, 2, 1],
     ...                         padding='SAME',
     ...                         pool = tf.nn.max_pool,
     ...                         name ='pool_layer2')
-    >>> network = tl.layers.FlattenLayer(network, name='flatten_layer')
-    >>> network = tl.layers.ReshapeLayer(network, shape=[-1, num_steps, int(network.outputs._shape[-1])])
-    >>> rnn1 = tl.layers.RNNLayer(network,
+    >>> net = tl.layers.FlattenLayer(net, name='flatten_layer')
+    >>> net = tl.layers.ReshapeLayer(net, shape=[-1, num_steps, int(net.outputs._shape[-1])])
+    >>> rnn1 = tl.layers.RNNLayer(net,
     ...                         cell_fn=tf.nn.rnn_cell.LSTMCell,
     ...                         cell_init_args={},
     ...                         n_hidden=200,
@@ -3727,7 +4368,7 @@ class RNNLayer(Layer):
     ...                         return_last=False,
     ...                         return_seq_2d=True,
     ...                         name='rnn_layer')
-    >>> network = tl.layers.DenseLayer(rnn1, n_units=3,
+    >>> net = tl.layers.DenseLayer(rnn1, n_units=3,
     ...                         act = tl.activation.identity, name='output_layer')
 
     Notes
@@ -3814,7 +4455,7 @@ class RNNLayer(Layer):
         else:
             self.cell = cell = cell_fn(num_units=n_hidden, **cell_init_args)
         if initial_state is None:
-            self.initial_state = cell.zero_state(batch_size, dtype=tf.float32)  # 1.2.3
+            self.initial_state = cell.zero_state(batch_size, dtype=D_TYPE)  #dtype=tf.float32)  # 1.2.3
         state = self.initial_state
         # with tf.variable_scope("model", reuse=None, initializer=initializer):
         with tf.variable_scope(name, initializer=initializer) as vs:
@@ -3871,11 +4512,11 @@ class BiRNNLayer(Layer):
         - see `RNN Cells in TensorFlow <https://www.tensorflow.org/api_docs/python/>`_
     cell_init_args : a dictionary
         The arguments for the cell initializer.
-    n_hidden : a int
+    n_hidden : an int
         The number of hidden units in the layer.
     initializer : initializer
         The initializer for initializing the parameters.
-    n_steps : a int
+    n_steps : an int
         The sequence length.
     fw_initial_state : None or forward RNN State
         If None, initial_state is zero_state.
@@ -3883,7 +4524,7 @@ class BiRNNLayer(Layer):
         If None, initial_state is zero_state.
     dropout : `tuple` of `float`: (input_keep_prob, output_keep_prob).
         The input and output keep probability.
-    n_layer : a int, default is 1.
+    n_layer : an int, default is 1.
         The number of RNN layers.
     return_last : boolean
         - If True, return the last output, "Sequence input and single output"
@@ -3896,7 +4537,7 @@ class BiRNNLayer(Layer):
     name : a string or None
         An optional name to attach to this layer.
 
-    Variables
+    Attributes
     --------------
     outputs : a tensor
         The output of this RNN.
@@ -4014,11 +4655,11 @@ class BiRNNLayer(Layer):
 
             # Initial state of RNN
             if fw_initial_state is None:
-                self.fw_initial_state = self.fw_cell.zero_state(self.batch_size, dtype=tf.float32)
+                self.fw_initial_state = self.fw_cell.zero_state(self.batch_size, dtype=D_TYPE) # dtype=tf.float32)
             else:
                 self.fw_initial_state = fw_initial_state
             if bw_initial_state is None:
-                self.bw_initial_state = self.bw_cell.zero_state(self.batch_size, dtype=tf.float32)
+                self.bw_initial_state = self.bw_cell.zero_state(self.batch_size, dtype=D_TYPE) # dtype=tf.float32)
             else:
                 self.bw_initial_state = bw_initial_state
             # exit()
@@ -4041,6 +4682,7 @@ class BiRNNLayer(Layer):
             )
 
             if return_last:
+                raise Exception("Do not support return_last at the moment.")
                 self.outputs = outputs[-1]
             else:
                 self.outputs = outputs
@@ -4071,6 +4713,300 @@ class BiRNNLayer(Layer):
         self.all_drop = dict(layer.all_drop)
         self.all_layers.extend( [self.outputs] )
         self.all_params.extend( rnn_variables )
+
+
+# ConvLSTM layer
+class ConvRNNCell(object):
+    """Abstract object representing an Convolutional RNN Cell.
+    """
+
+    def __call__(self, inputs, state, scope=None):
+        """Run this RNN cell on inputs, starting from the given state.
+        """
+        raise NotImplementedError("Abstract method")
+
+    @property
+    def state_size(self):
+        """size(s) of state(s) used by this cell.
+        """
+        raise NotImplementedError("Abstract method")
+
+    @property
+    def output_size(self):
+        """Integer or TensorShape: size of outputs produced by this cell."""
+        raise NotImplementedError("Abstract method")
+
+    def zero_state(self, batch_size, dtype):
+        """Return zero-filled state tensor(s).
+        Args:
+          batch_size: int, float, or unit Tensor representing the batch size.
+          dtype: the data type to use for the state.
+        Returns:
+          tensor of shape '[batch_size x shape[0] x shape[1] x num_features]
+          filled with zeros
+        """
+
+        shape = self.shape
+        num_features = self.num_features
+        zeros = tf.zeros([batch_size, shape[0], shape[1], num_features * 2])
+        return zeros
+
+class BasicConvLSTMCell(ConvRNNCell):
+    """Basic Conv LSTM recurrent network cell.
+
+    Parameters
+    -----------
+    shape : int tuple thats the height and width of the cell
+    filter_size : int tuple thats the height and width of the filter
+    num_features : int thats the depth of the cell
+    forget_bias : float, The bias added to forget gates (see above).
+    input_size : Deprecated and unused.
+    state_is_tuple : If True, accepted and returned states are 2-tuples of
+        the `c_state` and `m_state`.  If False, they are concatenated
+        along the column axis.  The latter behavior will soon be deprecated.
+    activation : Activation function of the inner states.
+    """
+    def __init__(self, shape, filter_size, num_features, forget_bias=1.0, input_size=None,
+                 state_is_tuple=False, activation=tf.nn.tanh):
+        """Initialize the basic Conv LSTM cell.
+        """
+        # if not state_is_tuple:
+        # logging.warn("%s: Using a concatenated state is slower and will soon be "
+        #             "deprecated.  Use state_is_tuple=True.", self)
+        if input_size is not None:
+            logging.warn("%s: The input_size parameter is deprecated.", self)
+        self.shape = shape
+        self.filter_size = filter_size
+        self.num_features = num_features
+        self._forget_bias = forget_bias
+        self._state_is_tuple = state_is_tuple
+        self._activation = activation
+
+    @property
+    def state_size(self):
+        """ State size of the LSTMStateTuple. """
+        return (LSTMStateTuple(self._num_units, self._num_units)
+                if self._state_is_tuple else 2 * self._num_units)
+
+    @property
+    def output_size(self):
+        """ Number of units in outputs. """
+        return self._num_units
+
+    def __call__(self, inputs, state, scope=None):
+        """Long short-term memory cell (LSTM)."""
+        with tf.variable_scope(scope or type(self).__name__):  # "BasicLSTMCell"
+            # Parameters of gates are concatenated into one multiply for efficiency.
+            if self._state_is_tuple:
+                c, h = state
+            else:
+                # print state
+                # c, h = tf.split(3, 2, state)
+                c, h = tf.split(state, 2, 3)
+            concat = _conv_linear([inputs, h], self.filter_size, self.num_features * 4, True)
+
+            # i = input_gate, j = new_input, f = forget_gate, o = output_gate
+            # i, j, f, o = tf.split(3, 4, concat)
+            i, j, f, o = tf.split(concat, 4, 3)
+
+            new_c = (c * tf.nn.sigmoid(f + self._forget_bias) + tf.nn.sigmoid(i) *
+                     self._activation(j))
+            new_h = self._activation(new_c) * tf.nn.sigmoid(o)
+
+            if self._state_is_tuple:
+                new_state = LSTMStateTuple(new_c, new_h)
+            else:
+                new_state = tf.concat([new_c, new_h], 3)
+            return new_h, new_state
+
+def _conv_linear(args, filter_size, num_features, bias, bias_start=0.0, scope=None):
+    """convolution:
+
+    Parameters
+    ----------
+      args: a 4D Tensor or a list of 4D, batch x n, Tensors.
+      filter_size: int tuple of filter height and width.
+      num_features: int, number of features.
+      bias_start: starting value to initialize the bias; 0 by default.
+      scope: VariableScope for the created subgraph; defaults to "Linear".
+
+    Returns
+    --------
+    - A 4D Tensor with shape [batch h w num_features]
+
+    Raises
+    -------
+    - ValueError : if some of the arguments has unspecified or wrong shape.
+    """
+
+    # Calculate the total size of arguments on dimension 1.
+    total_arg_size_depth = 0
+    shapes = [a.get_shape().as_list() for a in args]
+    for shape in shapes:
+        if len(shape) != 4:
+            raise ValueError("Linear is expecting 4D arguments: %s" % str(shapes))
+        if not shape[3]:
+            raise ValueError("Linear expects shape[4] of arguments: %s" % str(shapes))
+        else:
+            total_arg_size_depth += shape[3]
+
+    dtype = [a.dtype for a in args][0]
+
+    # Now the computation.
+    with tf.variable_scope(scope or "Conv"):
+        matrix = tf.get_variable(
+            "Matrix", [filter_size[0], filter_size[1], total_arg_size_depth, num_features], dtype=dtype)
+        if len(args) == 1:
+            res = tf.nn.conv2d(args[0], matrix, strides=[1, 1, 1, 1], padding='SAME')
+        else:
+            res = tf.nn.conv2d(tf.concat(args, 3), matrix, strides=[1, 1, 1, 1], padding='SAME')
+        if not bias:
+            return res
+        bias_term = tf.get_variable(
+            "Bias", [num_features],
+            dtype=dtype,
+            initializer=tf.constant_initializer(
+                bias_start, dtype=dtype))
+    return res + bias_term
+
+class ConvLSTMLayer(Layer):
+    """
+    The :class:`ConvLSTMLayer` class is a Convolutional LSTM layer,
+    see `Convolutional LSTM Layer <https://arxiv.org/abs/1506.04214>`_ .
+
+    Parameters
+    ----------
+    layer : a :class:`Layer` instance
+        The `Layer` class feeding into this layer.
+    cell_shape : tuple, the shape of each cell width*height
+    filter_size : tuple, the size of filter width*height
+    cell_fn : a Convolutional RNN cell as follow.
+    feature_map : a int
+        The number of feature map in the layer.
+    initializer : initializer
+        The initializer for initializing the parameters.
+    n_steps : a int
+        The sequence length.
+    initial_state : None or ConvLSTM State
+        If None, initial_state is zero_state.
+    return_last : boolen
+        - If True, return the last output, "Sequence input and single output"
+        - If False, return all outputs, "Synced sequence input and output"
+        - In other word, if you want to apply one or more ConvLSTM(s) on this layer, set to False.
+    return_seq_2d : boolen
+        - When return_last = False
+        - If True, return 4D Tensor [n_example, h, w, c], for stacking DenseLayer after it.
+        - If False, return 5D Tensor [n_example/n_steps, h, w, c], for stacking multiple ConvLSTM after it.
+    name : a string or None
+        An optional name to attach to this layer.
+
+    Variables
+    --------------
+    outputs : a tensor
+        The output of this RNN.
+        return_last = False, outputs = all cell_output, which is the hidden state.
+            cell_output.get_shape() = (?, h, w, c])
+
+    final_state : a tensor or StateTuple
+        When state_is_tuple = False,
+        it is the final hidden and cell states,
+        When state_is_tuple = True,
+        You can get the final state after each iteration during training, then
+        feed it to the initial state of next iteration.
+
+    initial_state : a tensor or StateTuple
+        It is the initial state of this ConvLSTM layer, you can use it to initialize
+        your state at the begining of each epoch or iteration according to your
+        training procedure.
+
+    batch_size : int or tensor
+        Is int, if able to compute the batch_size, otherwise, tensor for ``?``.
+    """
+    def __init__(
+            self,
+            layer=None,
+            cell_shape=None,
+            feature_map=1,
+            filter_size=(3, 3),
+            cell_fn=BasicConvLSTMCell,
+            initializer=tf.random_uniform_initializer(-0.1, 0.1),
+            n_steps=5,
+            initial_state=None,
+            return_last=False,
+            return_seq_2d=False,
+            name='convlstm_layer',
+    ):
+        Layer.__init__(self, name=name)
+        self.inputs = layer.outputs
+        print("  [TL] ConvLSTMLayer %s: feature_map:%d, n_steps:%d, "
+              "in_dim:%d %s, cell_fn:%s " % (self.name, feature_map,
+                                             n_steps, self.inputs.get_shape().ndims, self.inputs.get_shape(),
+                                             cell_fn.__name__))
+        # You can get the dimension by .get_shape() or ._shape, and check the
+        # dimension by .with_rank() as follow.
+        # self.inputs.get_shape().with_rank(2)
+        # self.inputs.get_shape().with_rank(3)
+
+        # Input dimension should be rank 5 [batch_size, n_steps(max), h, w, c]
+        try:
+            self.inputs.get_shape().with_rank(5)
+        except:
+            raise Exception("RNN : Input dimension should be rank 5 : [batch_size, n_steps, input_x, "
+                            "input_y, feature_map]")
+
+        fixed_batch_size = self.inputs.get_shape().with_rank_at_least(1)[0]
+
+        if fixed_batch_size.value:
+            batch_size = fixed_batch_size.value
+            print("     RNN batch_size (concurrent processes): %d" % batch_size)
+        else:
+            from tensorflow.python.ops import array_ops
+            batch_size = array_ops.shape(self.inputs)[0]
+            print("     non specified batch_size, uses a tensor instead.")
+        self.batch_size = batch_size
+
+
+        outputs = []
+        self.cell = cell = cell_fn(shape=cell_shape, filter_size=filter_size, num_features=feature_map)
+        if initial_state is None:
+            self.initial_state = cell.zero_state(batch_size, dtype=D_TYPE) # dtype=tf.float32)  # 1.2.3
+        state = self.initial_state
+        # with tf.variable_scope("model", reuse=None, initializer=initializer):
+        with tf.variable_scope(name, initializer=initializer) as vs:
+            for time_step in range(n_steps):
+                if time_step > 0: tf.get_variable_scope().reuse_variables()
+                (cell_output, state) = cell(self.inputs[:, time_step, :, :, :], state)
+                outputs.append(cell_output)
+
+            # Retrieve just the RNN variables.
+            # rnn_variables = [v for v in tf.all_variables() if v.name.startswith(vs.name)]
+            rnn_variables = tf.get_collection(tf.GraphKeys.VARIABLES, scope=vs.name)
+
+        print(" n_params : %d" % (len(rnn_variables)))
+
+        if return_last:
+            # 2D Tensor [batch_size, n_hidden]
+            self.outputs = outputs[-1]
+        else:
+            if return_seq_2d:
+                # PTB tutorial: stack dense layer after that, or compute the cost from the output
+                # 4D Tensor [n_example, h, w, c]
+                self.outputs = tf.reshape(tf.concat(outputs, 1), [-1, cell_shape[0] * cell_shape[1] * feature_map])
+            else:
+                # <akara>: stack more RNN layer after that
+                # 5D Tensor [n_example/n_steps, n_steps, h, w, c]
+                self.outputs = tf.reshape(tf.concat(outputs, 1), [-1, n_steps, cell_shape[0],
+                                                                  cell_shape[1], feature_map])
+
+        self.final_state = state
+
+        self.all_layers = list(layer.all_layers)
+        self.all_params = list(layer.all_params)
+        self.all_drop = dict(layer.all_drop)
+        self.all_layers.extend([self.outputs])
+        self.all_params.extend(rnn_variables)
+
+
 
 # Advanced Ops for Dynamic RNN
 def advanced_indexing_op(input, index):
@@ -4147,7 +5083,7 @@ def retrieve_seq_length_op(data):
     >>> data = [[[1,2],[2,2],[1,2],[1,2],[0,0]],
     ...         [[2,3],[2,4],[3,2],[0,0],[0,0]],
     ...         [[3,3],[2,2],[5,3],[1,2],[0,0]]]
-    >>> sl
+    >>> print(sl)
     ... [4 3 4]
 
     References
@@ -4186,7 +5122,6 @@ def retrieve_seq_length_op2(data):
     """
     return tf.reduce_sum(tf.cast(tf.greater(data, tf.zeros_like(data)), tf.int32), 1)
 
-
 def retrieve_seq_length_op3(data, pad_val=0): # HangSheng: return tensor for sequence length, if input is tf.string
     data_shape_size = data.get_shape().ndims
     if data_shape_size == 3:
@@ -4197,7 +5132,6 @@ def retrieve_seq_length_op3(data, pad_val=0): # HangSheng: return tensor for seq
         raise ValueError("retrieve_seq_length_op3: data has wrong shape!")
     else:
         raise ValueError("retrieve_seq_length_op3: handling data_shape_size %s hasn't been implemented!" % (data_shape_size))
-
 
 def target_mask_op(data, pad_val=0):        # HangSheng: return tensor for mask,if input is tf.string
     data_shape_size = data.get_shape().ndims
@@ -4224,7 +5158,7 @@ class DynamicRNNLayer(Layer):
         - see `RNN Cells in TensorFlow <https://www.tensorflow.org/api_docs/python/>`_
     cell_init_args : a dictionary
         The arguments for the cell initializer.
-    n_hidden : a int
+    n_hidden : an int
         The number of hidden units in the layer.
     initializer : initializer
         The initializer for initializing the parameters.
@@ -4237,7 +5171,7 @@ class DynamicRNNLayer(Layer):
         If None, initial_state is zero_state.
     dropout : `tuple` of `float`: (input_keep_prob, output_keep_prob).
         The input and output keep probability.
-    n_layer : a int, default is 1.
+    n_layer : an int, default is 1.
         The number of RNN layers.
     return_last : boolean
         - If True, return the last output, "Sequence input and single output"
@@ -4279,19 +5213,19 @@ class DynamicRNNLayer(Layer):
     Examples
     --------
     >>> input_seqs = tf.placeholder(dtype=tf.int64, shape=[batch_size, None], name="input_seqs")
-    >>> network = tl.layers.EmbeddingInputlayer(
+    >>> net = tl.layers.EmbeddingInputlayer(
     ...             inputs = input_seqs,
     ...             vocabulary_size = vocab_size,
     ...             embedding_size = embedding_size,
     ...             name = 'seq_embedding')
-    >>> network = tl.layers.DynamicRNNLayer(network,
+    >>> net = tl.layers.DynamicRNNLayer(net,
     ...             cell_fn = tf.contrib.rnn.BasicLSTMCell, # for TF0.2 tf.nn.rnn_cell.BasicLSTMCell,
     ...             n_hidden = embedding_size,
     ...             dropout = 0.7,
     ...             sequence_length = tl.layers.retrieve_seq_length_op2(input_seqs),
     ...             return_seq_2d = True,     # stack denselayer or compute cost after it
     ...             name = 'dynamic_rnn')
-    ... network = tl.layers.DenseLayer(network, n_units=vocab_size,
+    ... net = tl.layers.DenseLayer(net, n_units=vocab_size,
     ...             act=tf.identity, name="output")
 
     References
@@ -4400,7 +5334,7 @@ class DynamicRNNLayer(Layer):
 
         # Initialize initial_state
         if initial_state is None:
-            self.initial_state = self.cell.zero_state(batch_size, dtype=tf.float32)
+            self.initial_state = self.cell.zero_state(batch_size, dtype=D_TYPE) # dtype=tf.float32)
         else:
             self.initial_state = initial_state
 
@@ -4482,11 +5416,11 @@ class BiDynamicRNNLayer(Layer):
         - see `RNN Cells in TensorFlow <https://www.tensorflow.org/api_docs/python/>`_
     cell_init_args : a dictionary
         The arguments for the cell initializer.
-    n_hidden : a int
+    n_hidden : an int
         The number of hidden units in the layer.
     initializer : initializer
         The initializer for initializing the parameters.
-    sequence_length : a tensor, array or None
+    sequence_length : a tensor, array or None.
         The sequence length of each row of input data, see ``Advanced Ops for Dynamic RNN``.
             - If None, it uses ``retrieve_seq_length_op`` to compute the sequence_length, i.e. when the features of padding (on right hand side) are all zeros.
             - If using word embedding, you may need to compute the sequence_length from the ID array (the integer features before word embedding) by using ``retrieve_seq_length_op2`` or ``retrieve_seq_length_op``.
@@ -4498,7 +5432,7 @@ class BiDynamicRNNLayer(Layer):
         If None, initial_state is zero_state.
     dropout : `tuple` of `float`: (input_keep_prob, output_keep_prob).
         The input and output keep probability.
-    n_layer : a int, default is 1.
+    n_layer : an int, default is 1.
         The number of RNN layers.
     return_last : boolean
         If True, return the last output, "Sequence input and single output"\n
@@ -4511,7 +5445,7 @@ class BiDynamicRNNLayer(Layer):
     name : a string or None
         An optional name to attach to this layer.
 
-    Variables
+    Attributes
     -----------------------
     outputs : a tensor
         The output of this RNN.
@@ -4633,15 +5567,22 @@ class BiDynamicRNNLayer(Layer):
                 # cell_instance_fn=lambda: MultiRNNCell_fn([cell_instance_fn2() for _ in range(n_layer)])
                 self.fw_cell = MultiRNNCell_fn([cell_creator() for _ in range(n_layer)])
                 self.bw_cell = MultiRNNCell_fn([cell_creator() for _ in range(n_layer)])
+
+            if dropout:
+                self.fw_cell = DropoutWrapper_fn(self.fw_cell,
+                          input_keep_prob=1.0, output_keep_prob=out_keep_prob)
+                self.bw_cell = DropoutWrapper_fn(self.bw_cell,
+                          input_keep_prob=1.0, output_keep_prob=out_keep_prob)
+
             # self.fw_cell=cell_instance_fn()
             # self.bw_cell=cell_instance_fn()
             # Initial state of RNN
             if fw_initial_state is None:
-                self.fw_initial_state = self.fw_cell.zero_state(self.batch_size, dtype=tf.float32)
+                self.fw_initial_state = self.fw_cell.zero_state(self.batch_size, dtype=D_TYPE) # dtype=tf.float32)
             else:
                 self.fw_initial_state = fw_initial_state
             if bw_initial_state is None:
-                self.bw_initial_state = self.bw_cell.zero_state(self.batch_size, dtype=tf.float32)
+                self.bw_initial_state = self.bw_cell.zero_state(self.batch_size, dtype=D_TYPE) # dtype=tf.float32)
             else:
                 self.bw_initial_state = bw_initial_state
             # Computes sequence_length
@@ -4672,6 +5613,7 @@ class BiDynamicRNNLayer(Layer):
                 outputs = tf.concat(2, outputs)
             if return_last:
                 # [batch_size, 2 * n_hidden]
+                raise Exception("Do not support return_last at the moment")
                 self.outputs = advanced_indexing_op(outputs, sequence_length)
             else:
                 # [batch_size, n_step(max), 2 * n_hidden]
@@ -4709,10 +5651,12 @@ class BiDynamicRNNLayer(Layer):
 # Seq2seq
 class Seq2Seq(Layer):
     """
-    The :class:`Seq2Seq` class is a simple :class:`DynamicRNNLayer` based Seq2seq layer,
-    both encoder and decoder are :class:`DynamicRNNLayer`, network details
-    see `Model <https://camo.githubusercontent.com/242210d7d0151cae91107ee63bff364a860db5dd/687474703a2f2f6936342e74696e797069632e636f6d2f333031333674652e706e67>`_
-    and `Sequence to Sequence Learning with Neural Networks <https://arxiv.org/abs/1409.3215>`_ .
+    The :class:`Seq2Seq` class is a Simple :class:`DynamicRNNLayer` based Seq2seq layer without using `tl.contrib.seq2seq <https://www.tensorflow.org/api_guides/python/contrib.seq2seq>`_.
+    See `Model <https://camo.githubusercontent.com/9e88497fcdec5a9c716e0de5bc4b6d1793c6e23f/687474703a2f2f73757269796164656570616e2e6769746875622e696f2f696d672f736571327365712f73657132736571322e706e67>`_
+    and `Sequence to Sequence Learning with Neural Networks <https://arxiv.org/abs/1409.3215>`_.
+
+    - Please check the example `Chatbot in 200 lines of code <https://github.com/zsdonghao/seq2seq-chatbot>`_.
+    - The Author recommends users to read the source code of :class:`DynamicRNNLayer` and :class:`Seq2Seq`.
 
     Parameters
     ----------
@@ -4724,17 +5668,19 @@ class Seq2Seq(Layer):
         - see `RNN Cells in TensorFlow <https://www.tensorflow.org/api_docs/python/>`_
     cell_init_args : a dictionary
         The arguments for the cell initializer.
-    n_hidden : a int
+    n_hidden : an int
         The number of hidden units in the layer.
     initializer : initializer
         The initializer for initializing the parameters.
     encode_sequence_length : tensor for encoder sequence length, see :class:`DynamicRNNLayer` .
     decode_sequence_length : tensor for decoder sequence length, see :class:`DynamicRNNLayer` .
-    initial_state : None or forward RNN State
-        If None, initial_state is of encoder zero_state.
+    initial_state_encode : None or RNN state (from placeholder or other RNN).
+        If None, initial_state_encode is of zero state.
+    initial_state_decode : None or RNN state (from placeholder or other RNN).
+        If None, initial_state_decode is of the final state of the RNN encoder.
     dropout : `tuple` of `float`: (input_keep_prob, output_keep_prob).
         The input and output keep probability.
-    n_layer : a int, default is 1.
+    n_layer : an int, default is 1.
         The number of RNN layers.
     return_seq_2d : boolean
         - When return_last = False
@@ -4743,13 +5689,27 @@ class Seq2Seq(Layer):
     name : a string or None
         An optional name to attach to this layer.
 
-    Variables
+    Attributes
     ------------
     outputs : a tensor
         The output of RNN decoder.
+    initial_state_encode : a tensor or StateTuple
+        Initial state of RNN encoder.
+    initial_state_decode : a tensor or StateTuple
+        Initial state of RNN decoder.
+    final_state_encode : a tensor or StateTuple
+        Final state of RNN encoder.
+    final_state_decode : a tensor or StateTuple
+        Final state of RNN decoder.
 
-    final_state : a tensor or StateTuple
-        Final state of decoder, see :class:`DynamicRNNLayer` .
+    Notes
+    --------
+    - How to feed data: `Sequence to Sequence Learning with Neural Networks <https://arxiv.org/pdf/1409.3215v3.pdf>`_
+    - input_seqs : ``['how', 'are', 'you', '<PAD_ID'>]``
+    - decode_seqs : ``['<START_ID>', 'I', 'am', 'fine', '<PAD_ID'>]``
+    - target_seqs : ``['I', 'am', 'fine', '<END_ID', '<PAD_ID'>]``
+    - target_mask : ``[1, 1, 1, 1, 0]``
+    - related functions : tl.prepro <pad_sequences, precess_sequences, sequences_add_start_id, sequences_get_mask>
 
     Examples
     ----------
@@ -4781,7 +5741,7 @@ class Seq2Seq(Layer):
     ...             initializer = tf.random_uniform_initializer(-0.1, 0.1),
     ...             encode_sequence_length = retrieve_seq_length_op2(encode_seqs),
     ...             decode_sequence_length = retrieve_seq_length_op2(decode_seqs),
-    ...             initial_state = None,
+    ...             initial_state_encode = None,
     ...             dropout = None,
     ...             n_layer = 1,
     ...             return_seq_2d = True,
@@ -4791,14 +5751,7 @@ class Seq2Seq(Layer):
     >>> y = tf.nn.softmax(net_out.outputs)
     >>> net_out.print_params(False)
 
-    Notes
-    --------
-    - How to feed data: `Sequence to Sequence Learning with Neural Networks <https://arxiv.org/pdf/1409.3215v3.pdf>`_
-    - input_seqs : ``['how', 'are', 'you', '<PAD_ID'>]``
-    - decode_seqs : ``['<START_ID>', 'I', 'am', 'fine', '<PAD_ID'>]``
-    - target_seqs : ``['I', 'am', 'fine', '<END_ID']``
-    - target_mask : ``[1, 1, 1, 1, 0]``
-    - related functions : tl.prepro <pad_sequences, precess_sequences, sequences_add_start_id, sequences_get_mask>
+
     """
     def __init__(
         self,
@@ -4810,7 +5763,8 @@ class Seq2Seq(Layer):
         initializer = tf.random_uniform_initializer(-0.1, 0.1),
         encode_sequence_length = None,
         decode_sequence_length = None,
-        initial_state = None,
+        initial_state_encode = None,
+        initial_state_decode = None,
         dropout = None,
         n_layer = 1,
         # return_last = False,
@@ -4836,7 +5790,7 @@ class Seq2Seq(Layer):
                      cell_fn = cell_fn,
                      cell_init_args = cell_init_args,
                      n_hidden = n_hidden,
-                     initial_state = initial_state,
+                     initial_state = initial_state_encode,
                      dropout = dropout,
                      n_layer = n_layer,
                      sequence_length = encode_sequence_length,
@@ -4849,7 +5803,7 @@ class Seq2Seq(Layer):
                      cell_fn = cell_fn,
                      cell_init_args = cell_init_args,
                      n_hidden = n_hidden,
-                     initial_state = network_encode.final_state,
+                     initial_state = (network_encode.final_state if initial_state_decode is None else initial_state_decode),
                      dropout = dropout,
                      n_layer = n_layer,
                      sequence_length = decode_sequence_length,
@@ -4858,18 +5812,27 @@ class Seq2Seq(Layer):
                      name = name+'_decode')
             self.outputs = network_decode.outputs
 
-            rnn_variables = tf.get_collection(TF_GRAPHKEYS_VARIABLES, scope=vs.name)
+            # rnn_variables = tf.get_collection(TF_GRAPHKEYS_VARIABLES, scope=vs.name)
+
+        # Initial state
+        self.initial_state_encode = network_encode.initial_state
+        self.initial_state_decode = network_decode.initial_state
 
         # Final state
-        self.final_state = network_decode.final_state
+        self.final_state_encode = network_encode.final_state
+        self.final_state_decode = network_decode.final_state
 
         # self.sequence_length = sequence_length
-        self.all_layers = list(network_decode.all_layers)
-        self.all_params = list(network_decode.all_params)
-        self.all_drop = dict(network_decode.all_drop)
+        self.all_layers = list(network_encode.all_layers)
+        self.all_params = list(network_encode.all_params)
+        self.all_drop = dict(network_encode.all_drop)
+
+        self.all_layers.extend(list(network_decode.all_layers))
+        self.all_params.extend(list(network_decode.all_params))
+        self.all_drop.update(dict(network_decode.all_drop))
 
         self.all_layers.extend( [self.outputs] )
-        self.all_params.extend( rnn_variables )
+        # self.all_params.extend( rnn_variables )
 
         self.all_layers = list_remove_repeat(self.all_layers)
         self.all_params = list_remove_repeat(self.all_params)
@@ -4953,20 +5916,20 @@ class FlattenLayer(Layer):
     Examples
     --------
     >>> x = tf.placeholder(tf.float32, shape=[None, 28, 28, 1])
-    >>> network = tl.layers.InputLayer(x, name='input_layer')
-    >>> network = tl.layers.Conv2dLayer(network,
+    >>> net = tl.layers.InputLayer(x, name='input_layer')
+    >>> net = tl.layers.Conv2dLayer(net,
     ...                    act = tf.nn.relu,
     ...                    shape = [5, 5, 32, 64],
     ...                    strides=[1, 1, 1, 1],
     ...                    padding='SAME',
     ...                    name ='cnn_layer')
-    >>> network = tl.layers.Pool2dLayer(network,
+    >>> net = tl.layers.Pool2dLayer(net,
     ...                    ksize=[1, 2, 2, 1],
     ...                    strides=[1, 2, 2, 1],
     ...                    padding='SAME',
     ...                    pool = tf.nn.max_pool,
     ...                    name ='pool_layer',)
-    >>> network = tl.layers.FlattenLayer(network, name='flatten_layer')
+    >>> net = tl.layers.FlattenLayer(net, name='flatten_layer')
     """
     def __init__(
         self,
@@ -5026,6 +5989,39 @@ class ReshapeLayer(Layer):
         self.all_drop = dict(layer.all_drop)
         self.all_layers.extend( [self.outputs] )
 
+class TransposeLayer(Layer):
+    """
+    The :class:`TransposeLayer` class transpose the dimension of a teneor, see `tf.transpose() <https://www.tensorflow.org/api_docs/python/tf/transpose>`_ .
+
+    Parameters
+    ----------
+    layer : a :class:`Layer` instance
+        The `Layer` class feeding into this layer.
+    perm: list, a permutation of the dimensions
+        Similar with numpy.transpose.
+    name : a string or None
+        An optional name to attach to this layer.
+    """
+    def __init__(
+        self,
+        layer = None,
+        perm = None,
+        name = 'transpose',
+    ):
+        Layer.__init__(self, name=name)
+        self.inputs = layer.outputs
+        assert perm is not None
+
+        print("  [TL] TransposeLayer  %s: perm:%s" % (self.name, perm))
+        # with tf.variable_scope(name) as vs:
+        self.outputs = tf.transpose(self.inputs, perm=perm, name=name)
+        self.all_layers = list(layer.all_layers)
+        self.all_params = list(layer.all_params)
+        self.all_drop = dict(layer.all_drop)
+        self.all_layers.extend( [self.outputs] )
+        # self.all_params.extend( variables )
+
+## Lambda
 class LambdaLayer(Layer):
     """
     The :class:`LambdaLayer` class is a layer which is able to use the provided function.
@@ -5044,9 +6040,9 @@ class LambdaLayer(Layer):
     Examples
     ---------
     >>> x = tf.placeholder(tf.float32, shape=[None, 1], name='x')
-    >>> network = tl.layers.InputLayer(x, name='input_layer')
-    >>> network = LambdaLayer(network, lambda x: 2*x, name='lambda_layer')
-    >>> y = network.outputs
+    >>> net = tl.layers.InputLayer(x, name='input_layer')
+    >>> net = LambdaLayer(net, lambda x: 2*x, name='lambda_layer')
+    >>> y = net.outputs
     >>> sess = tf.InteractiveSession()
     >>> out = sess.run(y, feed_dict={x : [[1],[2]]})
     ... [[2],[4]]
@@ -5076,8 +6072,7 @@ class LambdaLayer(Layer):
 ## Merge layer
 class ConcatLayer(Layer):
     """
-    The :class:`ConcatLayer` class is layer which concat (merge) two or more
-    :class:`DenseLayer` to a single class:`DenseLayer`.
+    The :class:`ConcatLayer` class is layer which concat (merge) two or more tensor by given axis..
 
     Parameters
     ----------
@@ -5089,29 +6084,27 @@ class ConcatLayer(Layer):
         An optional name to attach to this layer.
 
     Examples
-    --------
+    ----------
     >>> sess = tf.InteractiveSession()
     >>> x = tf.placeholder(tf.float32, shape=[None, 784])
     >>> inputs = tl.layers.InputLayer(x, name='input_layer')
-    >>> net1 = tl.layers.DenseLayer(inputs, n_units=800, act = tf.nn.relu, name='relu1_1')
-    >>> net2 = tl.layers.DenseLayer(inputs, n_units=300, act = tf.nn.relu, name='relu2_1')
-    >>> network = tl.layers.ConcatLayer(layer = [net1, net2], name ='concat_layer')
+    >>> net1 = tl.layers.DenseLayer(inputs, 800, act=tf.nn.relu, name='relu1_1')
+    >>> net2 = tl.layers.DenseLayer(inputs, 300, act=tf.nn.relu, name='relu2_1')
+    >>> net = tl.layers.ConcatLayer([net1, net2], 1, name ='concat_layer')
     ...     [TL] InputLayer input_layer (?, 784)
-    ...     [TL] DenseLayer relu1_1: 800, <function relu at 0x1108e41e0>
-    ...     [TL] DenseLayer relu2_1: 300, <function relu at 0x1108e41e0>
+    ...     [TL] DenseLayer relu1_1: 800, relu
+    ...     [TL] DenseLayer relu2_1: 300, relu
     ...     [TL] ConcatLayer concat_layer, 1100
-    ...
     >>> tl.layers.initialize_global_variables(sess)
-    >>> network.print_params()
+    >>> net.print_params()
     ...     param 0: (784, 800) (mean: 0.000021, median: -0.000020 std: 0.035525)
-    ...     param 1: (800,) (mean: 0.000000, median: 0.000000 std: 0.000000)
+    ...     param 1: (800,)     (mean: 0.000000, median: 0.000000  std: 0.000000)
     ...     param 2: (784, 300) (mean: 0.000000, median: -0.000048 std: 0.042947)
-    ...     param 3: (300,) (mean: 0.000000, median: 0.000000 std: 0.000000)
+    ...     param 3: (300,)     (mean: 0.000000, median: 0.000000  std: 0.000000)
     ...     num of params: 863500
-    >>> network.print_layers()
-    ...     layer 0: Tensor("Relu:0", shape=(?, 800), dtype=float32)
+    >>> net.print_layers()
+    ...     layer 0: ("Relu:0", shape=(?, 800), dtype=float32)
     ...     layer 1: Tensor("Relu_1:0", shape=(?, 300), dtype=float32)
-    ...
     """
     def __init__(
         self,
@@ -5127,8 +6120,8 @@ class ConcatLayer(Layer):
             self.outputs = tf.concat(self.inputs, concat_dim, name=name)
         except: # TF0.12
             self.outputs = tf.concat(concat_dim, self.inputs, name=name)
-        self.n_units = int(self.outputs.get_shape()[-1])
-        print("  [TL] ConcatLayer %s: %d" % (self.name, self.n_units))
+
+        print("  [TL] ConcatLayer %s: axis: %d" % (self.name, concat_dim))
 
         self.all_layers = list(layer[0].all_layers)
         self.all_params = list(layer[0].all_params)
@@ -5197,7 +6190,7 @@ class ElementwiseLayer(Layer):
         self.all_params = list_remove_repeat(self.all_params)
         # self.all_drop = list_remove_repeat(self.all_drop)
 
-# Extend
+## Extend
 class ExpandDimsLayer(Layer):
     """
     The :class:`ExpandDimsLayer` class inserts a dimension of 1 into a tensor's shape,
@@ -5265,12 +6258,102 @@ class TileLayer(Layer):
         self.all_layers.extend( [self.outputs] )
         # self.all_params.extend( variables )
 
+## Stack Unstack
+class StackLayer(Layer):
+    """
+    The :class:`StackLayer` class is layer for stacking a list of rank-R tensors into one rank-(R+1) tensor, see `tf.stack() <https://www.tensorflow.org/api_docs/python/tf/stack>`_.
+
+    Parameters
+    ----------
+    layer : a list of :class:`Layer` instances
+        The `Layer` class feeding into this layer.
+    axis : an int
+        Dimension along which to concatenate.
+    name : a string or None
+        An optional name to attach to this layer.
+    """
+    def __init__(
+        self,
+        layer = [],
+        axis = 0,
+        name ='stack',
+    ):
+        Layer.__init__(self, name=name)
+        self.inputs = []
+        for l in layer:
+            self.inputs.append(l.outputs)
+
+        self.outputs = tf.stack(self.inputs, axis=axis, name=name)
+
+        print("  [TL] StackLayer %s: axis: %d" % (self.name, axis))
+
+        self.all_layers = list(layer[0].all_layers)
+        self.all_params = list(layer[0].all_params)
+        self.all_drop = dict(layer[0].all_drop)
+
+        for i in range(1, len(layer)):
+            self.all_layers.extend(list(layer[i].all_layers))
+            self.all_params.extend(list(layer[i].all_params))
+            self.all_drop.update(dict(layer[i].all_drop))
+
+        self.all_layers = list_remove_repeat(self.all_layers)
+        self.all_params = list_remove_repeat(self.all_params)
+
+def UnStackLayer(
+        layer = None,
+        num = None,
+        axis = 0,
+        name ='unstack',):
+    """
+    The :class:`UnStackLayer` is layer for unstacking the given dimension of a rank-R tensor into rank-(R-1) tensors., see `tf.unstack() <https://www.tensorflow.org/api_docs/python/tf/unstack>`_.
+
+    Parameters
+    ----------
+    layer : a list of :class:`Layer` instances
+        The `Layer` class feeding into this layer.
+    num : an int
+        The length of the dimension axis. Automatically inferred if None (the default).
+    axis : an int
+        Dimension along which to concatenate.
+    name : a string or None
+        An optional name to attach to this layer.
+
+    Returns
+    --------
+    The list of layer objects unstacked from the input.
+    """
+    inputs = layer.outputs
+    with tf.variable_scope(name) as vs:
+        outputs = tf.unstack(inputs, num=num, axis=axis)
+
+    print("  [TL] UnStackLayer %s: num: %s axis: %d, n_outputs: %d" % (name, num, axis, len(outputs)))
+
+    net_new = []
+    scope_name = tf.get_variable_scope().name
+    if scope_name:
+        whole_name = scope_name + '/' + name
+    else:
+        whole_name = name
+
+    for i in range(len(outputs)):
+        n = Layer(None, name=whole_name+str(i))
+        n.outputs = outputs[i]
+        n.all_layers = list(layer.all_layers)
+        n.all_params = list(layer.all_params)
+        n.all_drop = dict(layer.all_drop)
+        n.all_layers.extend( [inputs] )
+
+        net_new.append(n)
+
+    return net_new
+
 ## TF-Slim layer
 class SlimNetsLayer(Layer):
     """
     The :class:`SlimNetsLayer` class can be used to merge all TF-Slim nets into
-    TensorLayer. Model can be found in `slim-model <https://github.com/tensorflow/models/tree/master/slim#pre-trained-models>`_ , more about slim
-    see `slim-git <https://github.com/tensorflow/tensorflow/tree/master/tensorflow/contrib/slim>`_ .
+    TensorLayer. Models can be found in `slim-model <https://github.com/tensorflow/models/tree/master/research/slim#pre-trained-models>`_,
+    see Inception V3 example on `Github <https://github.com/zsdonghao/tensorlayer/blob/master/example/tutorial_inceptionV3_tfslim.py>`_.
+
 
     Parameters
     ----------
@@ -5282,10 +6365,6 @@ class SlimNetsLayer(Layer):
         The arguments for the slim model.
     name : a string or None
         An optional name to attach to this layer.
-
-    Examples
-    --------
-    - see Inception V3 example on `Github <https://github.com/zsdonghao/tensorlayer>`_
 
     Notes
     -----
@@ -5334,7 +6413,8 @@ class SlimNetsLayer(Layer):
 class KerasLayer(Layer):
     """
     The :class:`KerasLayer` class can be used to merge all Keras layers into
-    TensorLayer. Example can be found here `tutorial_keras.py <https://github.com/zsdonghao/tensorlayer/blob/master/example/tutorial_keras.py>`_
+    TensorLayer. Example can be found here `tutorial_keras.py <https://github.com/zsdonghao/tensorlayer/blob/master/example/tutorial_keras.py>`_.
+    This layer will be deprecated soon as :class:`LambdaLayer` can do the same thing.
 
     Parameters
     ----------
@@ -5372,7 +6452,8 @@ class KerasLayer(Layer):
 class EstimatorLayer(Layer):
     """
     The :class:`EstimatorLayer` class accepts ``model_fn`` that described the model.
-    It is similar with :class:`KerasLayer`, see `tutorial_keras.py <https://github.com/zsdonghao/tensorlayer/blob/master/example/tutorial_keras.py>`_
+    It is similar with :class:`KerasLayer`, see `tutorial_keras.py <https://github.com/zsdonghao/tensorlayer/blob/master/example/tutorial_keras.py>`_.
+    This layer will be deprecated soon as :class:`LambdaLayer` can do the same thing.
 
     Parameters
     ----------
@@ -5445,7 +6526,7 @@ class PReluLayer(Layer):
 
         # with tf.name_scope(name) as scope:
         with tf.variable_scope(name) as vs:
-            alphas = tf.get_variable(name='alphas', shape=w_shape, initializer=a_init, **a_init_args )
+            alphas = tf.get_variable(name='alphas', shape=w_shape, initializer=a_init, dtype=D_TYPE, **a_init_args )
             try:  ## TF 1.0
                 self.outputs = tf.nn.relu(self.inputs) + tf.multiply(alphas, (self.inputs - tf.abs(self.inputs))) * 0.5
             except: ## TF 0.12
@@ -5556,7 +6637,7 @@ class MultiplexerLayer(Layer):
 #     ----------
 #     layer : a list of :class:`Layer` instances
 #         The `Layer` class feeding into this layer.
-#     n_outputs : a int
+#     n_outputs : an int
 #         The number of output
 #     name : a string or None
 #         An optional name to attach to this layer.
@@ -5653,9 +6734,9 @@ class EmbeddingAttentionSeq2seqWrapper(Layer):
         softmax_loss_function = None
         # Sampled softmax only makes sense if we sample less than vocabulary size.
         if num_samples > 0 and num_samples < self.target_vocab_size:
-          w = tf.get_variable("proj_w", [size, self.target_vocab_size])
+          w = tf.get_variable("proj_w", [size, self.target_vocab_size], dtype=D_TYPE)
           w_t = tf.transpose(w)
-          b = tf.get_variable("proj_b", [self.target_vocab_size])
+          b = tf.get_variable("proj_b", [self.target_vocab_size], dtype=D_TYPE)
           output_projection = (w, b)
 
           def sampled_loss(inputs, labels):
@@ -5680,9 +6761,9 @@ class EmbeddingAttentionSeq2seqWrapper(Layer):
         cell = cell_creator()
         if num_layers > 1:
           try: # TF1.0
-            cell = tf.contrib.rnn.MultiRNNCell([single_cell] * num_layers)
+            cell = tf.contrib.rnn.MultiRNNCell([cell] * num_layers)
           except:
-            cell = tf.nn.rnn_cell.MultiRNNCell([single_cell] * num_layers)
+            cell = tf.nn.rnn_cell.MultiRNNCell([cell] * num_layers)
 
         # ============== Seq Decode Layer ============
         # The seq2seq function: we use embedding for the input and attention.
@@ -5895,42 +6976,43 @@ class EmbeddingAttentionSeq2seqWrapper(Layer):
     return batch_encoder_inputs, batch_decoder_inputs, batch_weights
 
 ## Developing or Untested
-class MaxoutLayer(Layer):
-    """
-    Waiting for contribution
+# class MaxoutLayer(Layer):
+#     """
+#     Waiting for contribution
+#
+#     Single DenseLayer with Max-out behaviour, work well with Dropout.
+#
+#     References
+#     -----------
+#     `Goodfellow (2013) Maxout Networks <http://arxiv.org/abs/1302.4389>`_
+#     """
+#     def __init__(
+#         self,
+#         layer = None,
+#         n_units = 100,
+#         name ='maxout_layer',
+#     ):
+#         Layer.__init__(self, name=name)
+#         self.inputs = layer.outputs
+#
+#         print("  [TL] MaxoutLayer %s: %d" % (self.name, self.n_units))
+#         print("    Waiting for contribution")
+#         with tf.variable_scope(name) as vs:
+#             pass
+#             # W = tf.Variable(init.xavier_init(n_inputs=n_in, n_outputs=n_units, uniform=True), name='W')
+#             # b = tf.Variable(tf.zeros([n_units]), name='b')
+#
+#         # self.outputs = act(tf.matmul(self.inputs, W) + b)
+#         # https://www.tensorflow.org/versions/r0.9/api_docs/python/array_ops.html#pack
+#         # http://stackoverflow.com/questions/34362193/how-to-explicitly-broadcast-a-tensor-to-match-anothers-shape-in-tensorflow
+#         # tf.concat tf.pack  tf.tile
+#
+#         self.all_layers = list(layer.all_layers)
+#         self.all_params = list(layer.all_params)
+#         self.all_drop = dict(layer.all_drop)
+#         self.all_layers.extend( [self.outputs] )
+#         self.all_params.extend( [W, b] )
 
-    Single DenseLayer with Max-out behaviour, work well with Dropout.
-
-    References
-    -----------
-    `Goodfellow (2013) Maxout Networks <http://arxiv.org/abs/1302.4389>`_
-    """
-    def __init__(
-        self,
-        layer = None,
-        n_units = 100,
-        name ='maxout_layer',
-    ):
-        Layer.__init__(self, name=name)
-        self.inputs = layer.outputs
-
-        print("  [TL] MaxoutLayer %s: %d" % (self.name, self.n_units))
-        print("    Waiting for contribution")
-        with tf.variable_scope(name) as vs:
-            pass
-            # W = tf.Variable(init.xavier_init(n_inputs=n_in, n_outputs=n_units, uniform=True), name='W')
-            # b = tf.Variable(tf.zeros([n_units]), name='b')
-
-        # self.outputs = act(tf.matmul(self.inputs, W) + b)
-        # https://www.tensorflow.org/versions/r0.9/api_docs/python/array_ops.html#pack
-        # http://stackoverflow.com/questions/34362193/how-to-explicitly-broadcast-a-tensor-to-match-anothers-shape-in-tensorflow
-        # tf.concat tf.pack  tf.tile
-
-        self.all_layers = list(layer.all_layers)
-        self.all_params = list(layer.all_params)
-        self.all_drop = dict(layer.all_drop)
-        self.all_layers.extend( [self.outputs] )
-        self.all_params.extend( [W, b] )
 
 
 

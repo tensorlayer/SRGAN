@@ -1,5 +1,5 @@
 #! /usr/bin/python
-# -*- coding: utf8 -*-
+# -*- coding: utf-8 -*-
 import tensorflow as tf
 import tensorlayer as tl
 from . import iterate
@@ -67,11 +67,11 @@ def fit(sess, network, train_op, cost, X_train, y_train, x, y_, acc=None, batch_
     ...            X_val=X_val, y_val=y_val, eval_train=False,
     ...            tensorboard=True, tensorboard_weight_histograms=True, tensorboard_graph_vis=True)
 
-    Note
+    Notes
     --------
-        If tensorboard=True, the global_variables_initializer will be run inside the fit function
-        in order to initalize the automatically generated summary nodes used for tensorboard visualization,
-        thus tf.global_variables_initializer().run() before the fit() call will be undefined.
+    If tensorboard=True, the global_variables_initializer will be run inside the fit function
+    in order to initalize the automatically generated summary nodes used for tensorboard visualization,
+    thus tf.global_variables_initializer().run() before the fit() call will be undefined.
     """
     assert X_train.shape[0] >= batch_size, "Number of training examples should be bigger than the batch size"
 
@@ -130,7 +130,7 @@ def fit(sess, network, train_op, cost, X_train, y_train, x, y_, acc=None, batch_
                     result = sess.run(merged, feed_dict=feed_dict)
                     train_writer.add_summary(result, tensorboard_train_index)
                     tensorboard_train_index += 1
-                if (X_val is not None) and (y_val is not None):                      
+                if (X_val is not None) and (y_val is not None):
                         for X_val_a, y_val_a in iterate.minibatches(
                                         X_val, y_val, batch_size, shuffle=True):
                                 dp_dict = dict_to_one( network.all_drop )    # disable noise layers
@@ -177,7 +177,6 @@ def fit(sess, network, train_op, cost, X_train, y_train, x, y_, acc=None, batch_
             else:
                 print("Epoch %d of %d took %fs, loss %f" % (epoch + 1, n_epoch, time.time() - start_time, loss_ep))
     print("Total training time: %fs" % (time.time() - start_time_begin))
-
 
 def test(sess, network, acc, X_test, y_test, x, y_, batch_size, cost=None):
     """
@@ -237,7 +236,6 @@ def test(sess, network, acc, X_test, y_test, x, y_, batch_size, cost=None):
             print("   test loss: %f" % (test_loss/ n_batch))
         print("   test acc: %f" % (test_acc/ n_batch))
 
-
 def predict(sess, network, X, x, y_op, batch_size=None):
     """
     Return the predict results of given non time-series network.
@@ -281,7 +279,21 @@ def predict(sess, network, X, x, y_op, batch_size=None):
             if result is None:
                 result = result_a
             else:
-                result = np.hstack((result, result_a))
+                result = np.vstack((result, result_a))
+        if result is None:
+            if len(X) % batch_size != 0:
+                dp_dict = dict_to_one(network.all_drop)
+                feed_dict = {x:  X[-(len(X) % batch_size):, :], }
+                feed_dict.update(dp_dict)
+                result_a = sess.run(y_op, feed_dict=feed_dict)
+                result = result_a
+        else:
+            if len(X) != len(result) and len(X) % batch_size != 0:
+                dp_dict = dict_to_one(network.all_drop)
+                feed_dict = {x: X[-(len(X) % batch_size):, :], }
+                feed_dict.update(dp_dict)
+                result_a = sess.run(y_op, feed_dict=feed_dict)
+                result = np.vstack((result, result_a))
         return result
 
 
@@ -348,7 +360,6 @@ def flatten_list(list_of_list=[[],[]]):
     ... [1, 2, 3, 4, 5, 6]
     """
     return sum(list_of_list, [])
-
 
 def class_balancing_oversample(X_train=None, y_train=None, printable=True):
     """Input the features and labels, return the features and labels after oversampling.
@@ -430,6 +441,7 @@ def class_balancing_oversample(X_train=None, y_train=None, printable=True):
     # ================ End of Classes balancing
     return X_train, y_train
 
+
 ## Random
 def get_random_int(min=0, max=10, number=5, seed=None):
     """Return a list of random integer by the given range and quantity.
@@ -444,6 +456,13 @@ def get_random_int(min=0, max=10, number=5, seed=None):
         rnd = random.Random(seed)
     # return [random.randint(min,max) for p in range(0, number)]
     return [rnd.randint(min,max) for p in range(0, number)]
+
+def list_string_to_dict(string):
+    """Inputs ``['a', 'b', 'c']``, returns ``{'a': 0, 'b': 1, 'c': 2}``."""
+    dictionary = {}
+    for idx, c in enumerate(string):
+        dictionary.update({c:idx})
+    return dictionary
 
 #
 # def class_balancing_sequence_4D(X_train, y_train, sequence_length, model='downsampling' ,printable=True):

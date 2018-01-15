@@ -1,5 +1,5 @@
 #! /usr/bin/python
-# -*- coding: utf8 -*-
+# -*- coding: utf-8 -*-
 
 
 import tensorflow as tf
@@ -30,17 +30,20 @@ from skimage import transform
 from skimage import exposure
 import skimage
 
+from multiprocessing import Pool
+
 # linalg https://docs.scipy.org/doc/scipy/reference/linalg.html
 # ndimage https://docs.scipy.org/doc/scipy/reference/ndimage.html
 
 ## Threading
-def threading_data(data=None, fn=None, **kwargs):
+def threading_data(data=None, fn=None, thread_count=None, **kwargs):
     """Return a batch of result by given data.
     Usually be used for data augmentation.
 
     Parameters
     -----------
-    data : numpy array or zip of numpy array, see Examples below.
+    data : numpy array, file names and etc, see Examples below.
+    thread_count : the number of threads to use
     fn : the function for data processing.
     more args : the args for fn, see Examples below.
 
@@ -56,6 +59,15 @@ def threading_data(data=None, fn=None, **kwargs):
     - List of array (e.g. functions with ``multi``)
     >>> X, Y --> [batch_size, row, col, 1]  greyscale
     >>> data = threading_data([_ for _ in zip(X, Y)], zoom_multi, zoom_range=[0.5, 1], is_random=True)
+    ... data --> [batch_size, 2, row, col, 1]
+    >>> X_, Y_ = data.transpose((1,0,2,3,4))
+    ... X_, Y_ --> [batch_size, row, col, 1]
+    >>> tl.visualize.images2d(images=np.asarray(X_), second=0.01, saveable=True, name='after', dtype=None)
+    >>> tl.visualize.images2d(images=np.asarray(Y_), second=0.01, saveable=True, name='before', dtype=None)
+
+    - Single array split across ``thread_count`` threads (e.g. functions with ``multi``)
+    >>> X, Y --> [batch_size, row, col, 1]  greyscale
+    >>> data = threading_data(X, zoom_multi, 8, zoom_range=[0.5, 1], is_random=True)
     ... data --> [batch_size, 2, row, col, 1]
     >>> X_, Y_ = data.transpose((1,0,2,3,4))
     ... X_, Y_ --> [batch_size, row, col, 1]
@@ -87,58 +99,47 @@ def threading_data(data=None, fn=None, **kwargs):
         results[i] = fn(data, **kwargs)
 
     ## start multi-threaded reading.
-    results = [None] * len(data) ## preallocate result list
-    threads = []
-    for i in range(len(data)):
-        t = threading.Thread(
-                        name='threading_and_return',
-                        target=apply_fn,
-                        args=(results, i, data[i], kwargs)
-                        )
-        t.start()
-        threads.append(t)
+    if thread_count is None: # by Milo
+        results = [None] * len(data) ## preallocate result list
+        threads = []
+        for i in range(len(data)):
+            t = threading.Thread(
+                            name='threading_and_return',
+                            target=apply_fn,
+                            args=(results, i, data[i], kwargs)
+                            )
+            t.start()
+            threads.append(t)
+    else: # by geometrikal
+        divs = np.linspace(0, len(data), thread_count + 1)
+        divs = np.round(divs).astype(int)
+        results = [None] * thread_count
+        threads = []
+        for i in range(thread_count):
+            t = threading.Thread(
+                name='threading_and_return',
+                target=apply_fn,
+                args=(results, i, data[divs[i]:divs[i + 1]], kwargs)
+            )
+            t.start()
+            threads.append(t)
 
     ## <Milo> wait for all threads to complete
     for t in threads:
         t.join()
 
-    return np.asarray(results)
-
-    ## old implementation
-    # define function for threading
-    # def function(q, i, data, kwargs):
-    #     result = fn(data, **kwargs)
-    #     q.put([i, result])
-    # ## start threading
-    # q = queue.Queue()
-    # threads = []
-    # for i in range(len(data)):
-    #     t = threading.Thread(
-    #                     name='threading_and_return',
-    #                     target=function,
-    #                     args=(q, i, data[i], kwargs)
-    #                     )
-    #     t.start()
-    #     threads.append(t)
-    #
-    # ## <Milo> wait for all threads to complete
-    # for t in threads:
-    #     t.join()
-    #
-    # ## get results
-    # results = []
-    # for i in range(len(data)):
-    #     result = q.get()
-    #     results.append(result)
-    # results = sorted(results)
-    # for i in range(len(results)):
-    #     results[i] = results[i][1]
-    # return np.asarray(results)
+    if thread_count is None:
+        try:
+            return np.asarray(results)
+        except:     # if dim don't match
+            return results
+    else:
+        return np.concatenate(results)
 
 
 ## Image
 def rotation(x, rg=20, is_random=False, row_index=0, col_index=1, channel_index=2,
-                    fill_mode='nearest', cval=0.):
+                    fill_mode='nearest', cval=0., order=1):
     """Rotate an image randomly or non-randomly.
 
     Parameters
@@ -157,6 +158,8 @@ def rotation(x, rg=20, is_random=False, row_index=0, col_index=1, channel_index=
         - `scipy ndimage affine_transform <https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.ndimage.interpolation.affine_transform.html>`_
     cval : scalar, optional
         Value used for points outside the boundaries of the input if mode='constant'. Default is 0.0
+    order : int, optional
+        The order of interpolation. The order has to be in the range 0-5. See ``apply_transform``.
 
         - `scipy ndimage affine_transform <https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.ndimage.interpolation.affine_transform.html>`_
 
@@ -176,11 +179,11 @@ def rotation(x, rg=20, is_random=False, row_index=0, col_index=1, channel_index=
 
     h, w = x.shape[row_index], x.shape[col_index]
     transform_matrix = transform_matrix_offset_center(rotation_matrix, h, w)
-    x = apply_transform(x, transform_matrix, channel_index, fill_mode, cval)
+    x = apply_transform(x, transform_matrix, channel_index, fill_mode, cval, order)
     return x
 
 def rotation_multi(x, rg=20, is_random=False, row_index=0, col_index=1, channel_index=2,
-                    fill_mode='nearest', cval=0.):
+                    fill_mode='nearest', cval=0., order=1):
     """Rotate multiple images with the same arguments, randomly or non-randomly.
     Usually be used for image segmentation which x=[X, Y], X and Y should be matched.
 
@@ -209,7 +212,7 @@ def rotation_multi(x, rg=20, is_random=False, row_index=0, col_index=1, channel_
     transform_matrix = transform_matrix_offset_center(rotation_matrix, h, w)
     results = []
     for data in x:
-        results.append( apply_transform(data, transform_matrix, channel_index, fill_mode, cval))
+        results.append( apply_transform(data, transform_matrix, channel_index, fill_mode, cval, order))
     return np.asarray(results)
 
 # crop
@@ -220,9 +223,9 @@ def crop(x, wrg, hrg, is_random=False, row_index=0, col_index=1, channel_index=2
     ----------
     x : numpy array
         An image with dimension of [row, col, channel] (default).
-    wrg : float
-        Size of weight.
-    hrg : float
+    wrg : int
+        Size of width.
+    hrg : int
         Size of height.
     is_random : boolean, default False
         If True, randomly crop, else central crop.
@@ -278,7 +281,7 @@ def crop_multi(x, wrg, hrg, is_random=False, row_index=0, col_index=1, channel_i
         return np.asarray(results)
 
 # flip
-def flip_axis(x, axis, is_random=False):
+def flip_axis(x, axis=1, is_random=False):
     """Flip the axis of an image, such as flip left and right, up and down, randomly or non-randomly,
 
     Parameters
@@ -347,7 +350,7 @@ def flip_axis_multi(x, axis, is_random=False):
 
 # shift
 def shift(x, wrg=0.1, hrg=0.1, is_random=False, row_index=0, col_index=1, channel_index=2,
-                 fill_mode='nearest', cval=0.):
+                 fill_mode='nearest', cval=0., order=1):
     """Shift an image randomly or non-randomly.
 
     Parameters
@@ -368,6 +371,8 @@ def shift(x, wrg=0.1, hrg=0.1, is_random=False, row_index=0, col_index=1, channe
         - `scipy ndimage affine_transform <https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.ndimage.interpolation.affine_transform.html>`_
     cval : scalar, optional
         Value used for points outside the boundaries of the input if mode='constant'. Default is 0.0.
+    order : int, optional
+        The order of interpolation. The order has to be in the range 0-5. See ``apply_transform``.
 
         - `scipy ndimage affine_transform <https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.ndimage.interpolation.affine_transform.html>`_
     """
@@ -382,11 +387,11 @@ def shift(x, wrg=0.1, hrg=0.1, is_random=False, row_index=0, col_index=1, channe
                                    [0, 0, 1]])
 
     transform_matrix = translation_matrix  # no need to do offset
-    x = apply_transform(x, transform_matrix, channel_index, fill_mode, cval)
+    x = apply_transform(x, transform_matrix, channel_index, fill_mode, cval, order)
     return x
 
 def shift_multi(x, wrg=0.1, hrg=0.1, is_random=False, row_index=0, col_index=1, channel_index=2,
-                 fill_mode='nearest', cval=0.):
+                 fill_mode='nearest', cval=0., order=1):
     """Shift images with the same arguments, randomly or non-randomly.
     Usually be used for image segmentation which x=[X, Y], X and Y should be matched.
 
@@ -409,12 +414,12 @@ def shift_multi(x, wrg=0.1, hrg=0.1, is_random=False, row_index=0, col_index=1, 
     transform_matrix = translation_matrix  # no need to do offset
     results = []
     for data in x:
-        results.append( apply_transform(data, transform_matrix, channel_index, fill_mode, cval))
+        results.append( apply_transform(data, transform_matrix, channel_index, fill_mode, cval, order))
     return np.asarray(results)
 
 # shear
 def shear(x, intensity=0.1, is_random=False, row_index=0, col_index=1, channel_index=2,
-                 fill_mode='nearest', cval=0.):
+                 fill_mode='nearest', cval=0., order=1):
     """Shear an image randomly or non-randomly.
 
     Parameters
@@ -434,8 +439,14 @@ def shear(x, intensity=0.1, is_random=False, row_index=0, col_index=1, channel_i
         - `scipy ndimage affine_transform <https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.ndimage.interpolation.affine_transform.html>`_
     cval : scalar, optional
         Value used for points outside the boundaries of the input if mode='constant'. Default is 0.0.
+    order : int, optional
+        The order of interpolation. The order has to be in the range 0-5. See ``apply_transform``.
 
         - `scipy ndimage affine_transform <https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.ndimage.interpolation.affine_transform.html>`_
+
+    References
+    -----------
+    - `Affine transformation <https://uk.mathworks.com/discovery/affine-transformation.html>`_
     """
     if is_random:
         shear = np.random.uniform(-intensity, intensity)
@@ -447,11 +458,11 @@ def shear(x, intensity=0.1, is_random=False, row_index=0, col_index=1, channel_i
 
     h, w = x.shape[row_index], x.shape[col_index]
     transform_matrix = transform_matrix_offset_center(shear_matrix, h, w)
-    x = apply_transform(x, transform_matrix, channel_index, fill_mode, cval)
+    x = apply_transform(x, transform_matrix, channel_index, fill_mode, cval, order)
     return x
 
 def shear_multi(x, intensity=0.1, is_random=False, row_index=0, col_index=1, channel_index=2,
-                 fill_mode='nearest', cval=0.):
+                 fill_mode='nearest', cval=0., order=1):
     """Shear images with the same arguments, randomly or non-randomly.
     Usually be used for image segmentation which x=[X, Y], X and Y should be matched.
 
@@ -459,7 +470,7 @@ def shear_multi(x, intensity=0.1, is_random=False, row_index=0, col_index=1, cha
     -----------
     x : list of numpy array
         List of images with dimension of [n_images, row, col, channel] (default).
-    others : see ``shear``.
+    others : see ``tl.prepro.shear``.
     """
     if is_random:
         shear = np.random.uniform(-intensity, intensity)
@@ -473,7 +484,77 @@ def shear_multi(x, intensity=0.1, is_random=False, row_index=0, col_index=1, cha
     transform_matrix = transform_matrix_offset_center(shear_matrix, h, w)
     results = []
     for data in x:
-        results.append( apply_transform(data, transform_matrix, channel_index, fill_mode, cval))
+        results.append( apply_transform(data, transform_matrix, channel_index, fill_mode, cval, order))
+    return np.asarray(results)
+
+def shear2(x, shear=(0.1, 0.1), is_random=False, row_index=0, col_index=1, channel_index=2,
+                 fill_mode='nearest', cval=0., order=1):
+    """Shear an image randomly or non-randomly.
+
+    Parameters
+    -----------
+    x : numpy array
+        An image with dimension of [row, col, channel] (default).
+    shear : tuple of two floats
+        Percentage of shear for height and width direction (0, 1).
+    is_random : boolean, default False
+        If True, randomly shear.
+    row_index, col_index, channel_index : int
+        Index of row, col and channel, default (0, 1, 2), for theano (1, 2, 0).
+    fill_mode : string
+        Method to fill missing pixel, default ‘nearest’, more options ‘constant’, ‘reflect’ or ‘wrap’.
+
+        - `scipy ndimage affine_transform <https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.ndimage.interpolation.affine_transform.html>`_
+    cval : scalar, optional
+        Value used for points outside the boundaries of the input if mode='constant'. Default is 0.0.
+    order : int, optional
+        The order of interpolation. The order has to be in the range 0-5. See ``apply_transform``.
+
+        - `scipy ndimage affine_transform <https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.ndimage.interpolation.affine_transform.html>`_
+
+    References
+    -----------
+    - `Affine transformation <https://uk.mathworks.com/discovery/affine-transformation.html>`_
+    """
+    assert len(shear) == 2, "shear should be tuple of 2 floats, or you want to use tl.prepro.shear rather than tl.prepro.shear2 ?"
+    if is_random:
+        shear[0] = np.random.uniform(-shear[0], shear[0])
+        shear[1] = np.random.uniform(-shear[1], shear[1])
+
+    shear_matrix = np.array([[1, shear[0], 0],
+                             [shear[1], 1, 0],
+                             [0, 0, 1]])
+
+    h, w = x.shape[row_index], x.shape[col_index]
+    transform_matrix = transform_matrix_offset_center(shear_matrix, h, w)
+    x = apply_transform(x, transform_matrix, channel_index, fill_mode, cval, order)
+    return x
+
+def shear_multi2(x, shear=(0.1, 0.1), is_random=False, row_index=0, col_index=1, channel_index=2,
+                 fill_mode='nearest', cval=0., order=1):
+    """Shear images with the same arguments, randomly or non-randomly.
+    Usually be used for image segmentation which x=[X, Y], X and Y should be matched.
+
+    Parameters
+    -----------
+    x : list of numpy array
+        List of images with dimension of [n_images, row, col, channel] (default).
+    others : see ``tl.prepro.shear2``.
+    """
+    assert len(shear) == 2, "shear should be tuple of 2 floats, or you want to use tl.prepro.shear_multi rather than tl.prepro.shear_multi2 ?"
+    if is_random:
+        shear[0] = np.random.uniform(-shear[0], shear[0])
+        shear[1] = np.random.uniform(-shear[1], shear[1])
+
+    shear_matrix = np.array([[1, shear[0], 0],
+                             [shear[1], 1, 0],
+                             [0, 0, 1]])
+
+    h, w = x[0].shape[row_index], x[0].shape[col_index]
+    transform_matrix = transform_matrix_offset_center(shear_matrix, h, w)
+    results = []
+    for data in x:
+        results.append( apply_transform(data, transform_matrix, channel_index, fill_mode, cval, order))
     return np.asarray(results)
 
 # swirl
@@ -661,7 +742,7 @@ def elastic_transform_multi(x, alpha, sigma, mode="constant", cval=0, is_random=
 
 # zoom
 def zoom(x, zoom_range=(0.9, 1.1), is_random=False, row_index=0, col_index=1, channel_index=2,
-                fill_mode='nearest', cval=0.):
+                fill_mode='nearest', cval=0., order=1):
     """Zoom in and out of a single image, randomly or non-randomly.
 
     Parameters
@@ -670,7 +751,7 @@ def zoom(x, zoom_range=(0.9, 1.1), is_random=False, row_index=0, col_index=1, ch
         An image with dimension of [row, col, channel] (default).
     zoom_range : list or tuple
         - If is_random=False, (h, w) are the fixed zoom factor for row and column axies, factor small than one is zoom in.
-        - If is_random=True, (min zoom out, max zoom out) for x and y with different random zoom in/out factor.
+        - If is_random=True, it is (min zoom out, max zoom out) for x and y with different random zoom in/out factor.
         e.g (0.5, 1) zoom in 1~2 times.
     is_random : boolean, default False
         If True, randomly zoom.
@@ -682,6 +763,8 @@ def zoom(x, zoom_range=(0.9, 1.1), is_random=False, row_index=0, col_index=1, ch
         - `scipy ndimage affine_transform <https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.ndimage.interpolation.affine_transform.html>`_
     cval : scalar, optional
         Value used for points outside the boundaries of the input if mode='constant'. Default is 0.0.
+    order : int, optional
+        The order of interpolation. The order has to be in the range 0-5. See ``apply_transform``.
 
         - `scipy ndimage affine_transform <https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.ndimage.interpolation.affine_transform.html>`_
     """
@@ -703,11 +786,11 @@ def zoom(x, zoom_range=(0.9, 1.1), is_random=False, row_index=0, col_index=1, ch
 
     h, w = x.shape[row_index], x.shape[col_index]
     transform_matrix = transform_matrix_offset_center(zoom_matrix, h, w)
-    x = apply_transform(x, transform_matrix, channel_index, fill_mode, cval)
+    x = apply_transform(x, transform_matrix, channel_index, fill_mode, cval, order)
     return x
 
 def zoom_multi(x, zoom_range=(0.9, 1.1), is_random=False,
-        row_index=0, col_index=1, channel_index=2, fill_mode='nearest', cval=0.):
+        row_index=0, col_index=1, channel_index=2, fill_mode='nearest', cval=0., order=1):
     """Zoom in and out of images with the same arguments, randomly or non-randomly.
     Usually be used for image segmentation which x=[X, Y], X and Y should be matched.
 
@@ -740,7 +823,7 @@ def zoom_multi(x, zoom_range=(0.9, 1.1), is_random=False,
     # return x
     results = []
     for data in x:
-        results.append( apply_transform(data, transform_matrix, channel_index, fill_mode, cval))
+        results.append( apply_transform(data, transform_matrix, channel_index, fill_mode, cval, order))
     return np.asarray(results)
 
 # image = tf.image.random_brightness(image, max_delta=32. / 255.)
@@ -757,7 +840,7 @@ def brightness(x, gamma=1, gain=1, is_random=False):
     x : numpy array
         An image with dimension of [row, col, channel] (default).
     gamma : float, small than 1 means brighter.
-        Non negative real number. Default value is 1.
+        Non negative real number. Default value is 1, smaller means brighter.
 
         - If is_random is True, gamma in a range of (1-gamma, 1+gamma).
     gain : float
@@ -793,19 +876,185 @@ def brightness_multi(x, gamma=1, gain=1, is_random=False):
         results.append( exposure.adjust_gamma(data, gamma, gain) )
     return np.asarray(results)
 
+# illumination
+def illumination(x, gamma=1., contrast=1., saturation=1., is_random=False):
+    """Perform illumination augmentation for a single image, randomly or non-randomly.
 
-# contrast
-def constant(x, cutoff=0.5, gain=10, inv=False, is_random=False):
-    # TODO
-    x = exposure.adjust_sigmoid(x, cutoff=cutoff, gain=gain, inv=inv)
-    return x
+    Parameters
+    -----------
+    x : numpy array
+        an image with dimension of [row, col, channel] (default).
+    gamma : change brightness (the same with ``tl.prepro.brightness``)
+        - if is_random=False, one float number, small than one means brighter, greater than one means darker.
+        - if is_random=True, tuple of two float numbers, (min, max).
+    contrast : change contrast
+        - if is_random=False, one float number, small than one means blur.
+        - if is_random=True, tuple of two float numbers, (min, max).
+    saturation : change saturation
+        - if is_random=False, one float number, small than one means unsaturation.
+        - if is_random=True, tuple of two float numbers, (min, max).
+    is_random : whether the parameters are randomly set.
 
-def constant_multi():
-    #TODO
-    pass
+    Examples
+    ---------
+    - Random
+    >>> x = illumination(x, gamma=(0.5, 5.0), contrast=(0.3, 1.0), saturation=(0.7, 1.0), is_random=True)
+    - Non-random
+    >>> x = illumination(x, 0.5, 0.6, 0.8, is_random=False)
+    """
+    from PIL import Image, ImageEnhance
+
+    if is_random:
+        try:
+            assert len(gamma) == len(contrast) == len(saturation) == 2, "if is_random = True, the arguments are (min, max)"
+        except:
+            raise Exception("if is_random = True, the arguments are (min, max)")
+        ## random change brightness  # small --> brighter
+        illum_settings = np.random.randint(0,3) # 0-brighter, 1-darker, 2 keep normal
+
+        if illum_settings == 0: # brighter
+            gamma = np.random.uniform(gamma[0], 1.0) # (.5, 1.0)
+        elif illum_settings == 1: # darker
+            gamma = np.random.uniform(1.0, gamma[1])# (1.0, 5.0)
+        else:
+            gamma = 1
+        im_ = brightness(x, gamma=gamma, gain=1, is_random=False)
+
+        # print("using contrast and saturation")
+        image = Image.fromarray(im_) # array -> PIL
+        contrast_adjust = ImageEnhance.Contrast(image)
+        image = contrast_adjust.enhance(np.random.uniform(contrast[0], contrast[1]))#0.3,0.9))
+
+        saturation_adjust = ImageEnhance.Color(image)
+        image = saturation_adjust.enhance(np.random.uniform(saturation[0], saturation[1]))# (0.7,1.0))
+        im_ = np.array(image) # PIL -> array
+    else:
+        im_ = brightness(x, gamma=gamma, gain=1, is_random=False)
+        image = Image.fromarray(im_) # array -> PIL
+        contrast_adjust = ImageEnhance.Contrast(image)
+        image = contrast_adjust.enhance(contrast)
+
+        saturation_adjust = ImageEnhance.Color(image)
+        image = saturation_adjust.enhance(saturation)
+        im_ = np.array(image) # PIL -> array
+    return np.asarray(im_)
+
+# hue
+def rgb_to_hsv(rgb):
+    """ Input RGB image [0~255] return HSV image [0~1].
+
+    Parameters
+    -------------
+    rgb : should be a numpy arrays with values between 0 and 255.
+    """
+    # Translated from source of colorsys.rgb_to_hsv
+    # r,g,b should be a numpy arrays with values between 0 and 255
+    # rgb_to_hsv returns an array of floats between 0.0 and 1.0.
+    rgb = rgb.astype('float')
+    hsv = np.zeros_like(rgb)
+    # in case an RGBA array was passed, just copy the A channel
+    hsv[..., 3:] = rgb[..., 3:]
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    maxc = np.max(rgb[..., :3], axis=-1)
+    minc = np.min(rgb[..., :3], axis=-1)
+    hsv[..., 2] = maxc
+    mask = maxc != minc
+    hsv[mask, 1] = (maxc - minc)[mask] / maxc[mask]
+    rc = np.zeros_like(r)
+    gc = np.zeros_like(g)
+    bc = np.zeros_like(b)
+    rc[mask] = (maxc - r)[mask] / (maxc - minc)[mask]
+    gc[mask] = (maxc - g)[mask] / (maxc - minc)[mask]
+    bc[mask] = (maxc - b)[mask] / (maxc - minc)[mask]
+    hsv[..., 0] = np.select(
+        [r == maxc, g == maxc], [bc - gc, 2.0 + rc - bc], default=4.0 + gc - rc)
+    hsv[..., 0] = (hsv[..., 0] / 6.0) % 1.0
+    return hsv
+
+def hsv_to_rgb(hsv):
+    """ Input HSV image [0~1] return RGB image [0~255].
+
+    Parameters
+    -------------
+    hsv : should be a numpy arrays with values between 0.0 and 1.0
+    """
+    # Translated from source of colorsys.hsv_to_rgb
+    # h,s should be a numpy arrays with values between 0.0 and 1.0
+    # v should be a numpy array with values between 0.0 and 255.0
+    # hsv_to_rgb returns an array of uints between 0 and 255.
+    rgb = np.empty_like(hsv)
+    rgb[..., 3:] = hsv[..., 3:]
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    i = (h * 6.0).astype('uint8')
+    f = (h * 6.0) - i
+    p = v * (1.0 - s)
+    q = v * (1.0 - s * f)
+    t = v * (1.0 - s * (1.0 - f))
+    i = i % 6
+    conditions = [s == 0.0, i == 1, i == 2, i == 3, i == 4, i == 5]
+    rgb[..., 0] = np.select(conditions, [v, q, p, p, t, v], default=v)
+    rgb[..., 1] = np.select(conditions, [v, v, v, q, p, p], default=t)
+    rgb[..., 2] = np.select(conditions, [v, p, t, v, v, q], default=p)
+    return rgb.astype('uint8')
+
+
+def adjust_hue(im, hout=0.66, is_offset=True, is_clip=True, is_random=False):
+    """ Adjust hue of an RGB image. This is a convenience method that converts an RGB image to float representation, converts it to HSV, add an offset to the hue channel, converts back to RGB and then back to the original data type.
+    For TF, see `tf.image.adjust_hue <https://www.tensorflow.org/api_docs/python/tf/image/adjust_hue>`_ and `tf.image.random_hue <https://www.tensorflow.org/api_docs/python/tf/image/random_hue>`_.
+
+    Parameters
+    -----------
+    im : should be a numpy arrays with values between 0 and 255.
+    hout : float.
+        - If is_offset is False, set all hue values to this value. 0 is red; 0.33 is green; 0.66 is blue.
+        - If is_offset is True, add this value as the offset to the hue channel.
+    is_offset : boolean, default True.
+    is_clip : boolean, default True.
+        - If True, set negative hue values to 0.
+    is_random : boolean, default False.
+
+    Examples
+    ---------
+    - Random, add a random value between -0.2 and 0.2 as the offset to every hue values.
+    >>> im_hue = tl.prepro.adjust_hue(image, hout=0.2, is_offset=True, is_random=False)
+
+    - Non-random, make all hue to green.
+    >>> im_green = tl.prepro.adjust_hue(image, hout=0.66, is_offset=False, is_random=False)
+
+    References
+    -----------
+    - `tf.image.random_hue <https://www.tensorflow.org/api_docs/python/tf/image/random_hue>`_.
+    - `tf.image.adjust_hue <https://www.tensorflow.org/api_docs/python/tf/image/adjust_hue>`_.
+    - `StackOverflow: Changing image hue with python PIL <https://stackoverflow.com/questions/7274221/changing-image-hue-with-python-pil>`_.
+    """
+    hsv = rgb_to_hsv(im)
+    if is_random:
+        hout = np.random.uniform(-hout, hout)
+
+    if is_offset:
+        hsv[...,0] += hout
+    else:
+        hsv[...,0] = hout
+
+    if is_clip:
+        hsv[...,0] = np.clip(hsv[...,0], 0, np.inf)  # Hao : can remove green dots
+
+    rgb = hsv_to_rgb(hsv)
+    return rgb
+
+
+# # contrast
+# def constant(x, cutoff=0.5, gain=10, inv=False, is_random=False):
+#     # TODO
+#     x = exposure.adjust_sigmoid(x, cutoff=cutoff, gain=gain, inv=inv)
+#     return x
+#
+# def constant_multi():
+#     #TODO
+#     pass
 
 # resize
-def imresize(x, size=[100, 100], interp='bilinear', mode=None):
+def imresize(x, size=[100, 100], interp='bicubic', mode=None):
     """Resize an image by given output size and method. Warning, this function
     will rescale the value to [0, 255].
 
@@ -840,6 +1089,36 @@ def imresize(x, size=[100, 100], interp='bilinear', mode=None):
         return scipy.misc.imresize(x, size, interp=interp, mode=mode)
     else:
         raise Exception("Unsupported channel %d" % x.shape[-1])
+
+# value scale
+def pixel_value_scale(im, val=0.9, clip=[], is_random=False):
+    """Scales each value in the pixels of the image.
+
+    Parameters
+    -----------
+    im : numpy array for one image.
+    val : float.
+        - If is_random=False, multiply this value with all pixels.
+        - If is_random=True, multiply a value between [1-val, 1+val] with all pixels.
+
+    Examples
+    ----------
+    - Random
+    >>> im = pixel_value_scale(im, 0.1, [0, 255], is_random=True)
+
+    - Non-random
+    >>> im = pixel_value_scale(im, 0.9, [0, 255], is_random=False)
+    """
+    if is_random:
+        scale = 1 + np.random.uniform(-val, val)
+        im = im * scale
+    else:
+        im = im * val
+
+    if len(clip) == 2:
+        im = np.clip(im, clip[0], clip[1])
+
+    return im
 
 # normailization
 def samplewise_norm(x, rescale=None, samplewise_center=False, samplewise_std_normalization=False,
@@ -934,11 +1213,11 @@ def zca_whitening(x, principal_components):
         An image with dimension of [row, col, channel] (default).
     principal_components : matrix from ``get_zca_whitening_principal_components_img``.
     """
-    # flatx = np.reshape(x, (x.size))
-    print(principal_components.shape, x.shape)  # ((28160, 28160), (160, 176, 1))
+    flatx = np.reshape(x, (x.size))
+    # print(principal_components.shape, x.shape)  # ((28160, 28160), (160, 176, 1))
     # flatx = np.reshape(x, (x.shape))
     # flatx = np.reshape(x, (x.shape[0], ))
-    print(flatx.shape)  # (160, 176, 1)
+    # print(flatx.shape)  # (160, 176, 1)
     whitex = np.dot(flatx, principal_components)
     x = np.reshape(whitex, (x.shape[0], x.shape[1], x.shape[2]))
     return x
@@ -988,7 +1267,7 @@ def channel_shift(x, intensity, is_random=False, channel_index=2):
     # x = np.rollaxis(x, 0, channel_index+1)
     # return x
 
-def channel_shift_multi(x, intensity, channel_index=2):
+def channel_shift_multi(x, intensity, is_random=False, channel_index=2):
     """Shift the channels of images with the same arguments, randomly or non-randomly, see `numpy.rollaxis <https://docs.scipy.org/doc/numpy/reference/generated/numpy.rollaxis.html>`_ .
     Usually be used for image segmentation which x=[X, Y], X and Y should be matched.
 
@@ -1076,13 +1355,13 @@ def transform_matrix_offset_center(matrix, x, y):
     return transform_matrix
 
 
-def apply_transform(x, transform_matrix, channel_index=2, fill_mode='nearest', cval=0.):
+def apply_transform(x, transform_matrix, channel_index=2, fill_mode='nearest', cval=0., order=1):
     """Return transformed images by given transform_matrix from ``transform_matrix_offset_center``.
 
     Parameters
     ----------
     x : numpy array
-        Batch of images with dimension of 3, [batch_size, row, col, channel].
+        An image with dimension of [row, col, channel] (default).
     transform_matrix : numpy array
         Transform matrix (offset center), can be generated by ``transform_matrix_offset_center``
     channel_index : int
@@ -1093,6 +1372,15 @@ def apply_transform(x, transform_matrix, channel_index=2, fill_mode='nearest', c
         - `scipy ndimage affine_transform <https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.ndimage.interpolation.affine_transform.html>`_
     cval : scalar, optional
         Value used for points outside the boundaries of the input if mode='constant'. Default is 0.0
+    order : int, optional
+        The order of interpolation. The order has to be in the range 0-5:
+
+        - 0 Nearest-neighbor
+        - 1 Bi-linear (default)
+        - 2 Bi-quadratic
+        - 3 Bi-cubic
+        - 4 Bi-quartic
+        - 5 Bi-quintic
 
         - `scipy ndimage affine_transform <https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.ndimage.interpolation.affine_transform.html>`_
 
@@ -1104,7 +1392,7 @@ def apply_transform(x, transform_matrix, channel_index=2, fill_mode='nearest', c
     final_affine_matrix = transform_matrix[:2, :2]
     final_offset = transform_matrix[:2, 2]
     channel_images = [ndi.interpolation.affine_transform(x_channel, final_affine_matrix,
-                      final_offset, order=0, mode=fill_mode, cval=cval) for x_channel in x]
+                      final_offset, order=order, mode=fill_mode, cval=cval) for x_channel in x]
     x = np.stack(channel_images, axis=0)
     x = np.rollaxis(x, 0, channel_index+1)
     return x
@@ -1118,7 +1406,7 @@ def projective_transform_by_points(x, src, dst, map_args={}, output_shape=None, 
     x : numpy array
         An image with dimension of [row, col, channel] (default).
     src : list or numpy
-        The original coordinates, usually 4 coordinates of (x, y).
+        The original coordinates, usually 4 coordinates of (width, height).
     dst : list or numpy
         The coordinates after transformation, the number of coordinates is the same with src.
     map_args : dict, optional
@@ -1146,7 +1434,7 @@ def projective_transform_by_points(x, src, dst, map_args={}, output_shape=None, 
     Examples
     --------
     >>> Assume X is an image from CIFAR 10, i.e. shape == (32, 32, 3)
-    >>> src = [[0,0],[0,32],[32,0],[32,32]]
+    >>> src = [[0,0],[0,32],[32,0],[32,32]]     # [w, h]
     >>> dst = [[10,10],[0,32],[32,0],[32,32]]
     >>> x = projective_transform_by_points(X, src, dst)
 
@@ -1252,7 +1540,7 @@ def binary_dilation(x, radius=3):
     """
     from skimage.morphology import disk, binary_dilation
     mask = disk(radius)
-    x = binary_dilation(image, selem=mask)
+    x = binary_dilation(x, selem=mask)
     return x
 
 def dilation(x, radius=3):
@@ -1268,6 +1556,706 @@ def dilation(x, radius=3):
     mask = disk(radius)
     x = dilation(x, selem=mask)
     return x
+
+
+def binary_erosion(x, radius=3):
+    """ Return binary morphological erosion of an image,
+    see `skimage.morphology.binary_erosion <http://scikit-image.org/docs/dev/api/skimage.morphology.html#skimage.morphology.binary_erosion>`_.
+
+    Parameters
+    -----------
+    x : 2D array image.
+    radius : int for the radius of mask.
+    """
+    from skimage.morphology import disk, dilation, binary_erosion
+    mask = disk(radius)
+    x = binary_erosion(x, selem=mask)
+    return x
+
+def erosion(x, radius=3):
+    """ Return greyscale morphological erosion of an image,
+    see `skimage.morphology.erosion <http://scikit-image.org/docs/dev/api/skimage.morphology.html#skimage.morphology.erosion>`_.
+
+    Parameters
+    -----------
+    x : 2D array image.
+    radius : int for the radius of mask.
+    """
+    from skimage.morphology import disk, dilation, erosion
+    mask = disk(radius)
+    x = erosion(x, selem=mask)
+    return x
+
+
+
+## Object Detection
+
+def obj_box_coords_rescale(coords=[], shape=[100, 200]):
+    """Scale down a list of coordinates from pixel unit to the ratio of image size i.e. in the range of [0, 1].
+
+    Parameters
+    ------------
+    coords : list of list for coordinates [[x, y, w, h], [x, y, w, h], ...]
+    shape : list of 2 integers for [height, width] of the image.
+
+    Examples
+    ---------
+    >>> coords = obj_box_coords_rescale(coords=[[30, 40, 50, 50], [10, 10, 20, 20]], shape=[100, 100])
+    >>> print(coords)
+    ... [[0.3, 0.4, 0.5, 0.5], [0.1, 0.1, 0.2, 0.2]]
+    >>> coords = obj_box_coords_rescale(coords=[[30, 40, 50, 50]], shape=[50, 100])
+    >>> print(coords)
+    ... [[0.3, 0.8, 0.5, 1.0]]
+    >>> coords = obj_box_coords_rescale(coords=[[30, 40, 50, 50]], shape=[100, 200])
+    >>> print(coords)
+    ... [[0.15, 0.4, 0.25, 0.5]]
+    """
+    imh, imw = shape[0], shape[1]
+    imh = imh * 1.0 # * 1.0 for python2 : force division to be float point
+    imw = imw * 1.0
+    coords_new = list()
+    for coord in coords:
+        assert len(coord) == 4, "coordinate should be 4 values : [x, y, w, h]"
+        x = coord[0] / imw
+        y = coord[1] / imh
+        w = coord[2] / imw
+        h = coord[3] / imh
+        coords_new.append([x, y, w, h])
+    return coords_new
+
+def obj_box_coord_rescale(coord=[], shape=[100, 200]):
+    """Scale down one coordinates from pixel unit to the ratio of image size i.e. in the range of [0, 1].
+    It is the reverse process of ``obj_box_coord_scale_to_pixelunit``.
+
+    Parameters
+    ------------
+    coords : list of list for coordinates [[x, y, w, h], [x, y, w, h], ...]
+    shape : list of 2 integers for [height, width] of the image.
+
+    Examples
+    ---------
+    >>> coord = obj_box_coord_rescale(coord=[30, 40, 50, 50], shape=[100, 100])
+    ... [[0.3, 0.4, 0.5, 0.5]]
+    """
+    return obj_box_coords_rescale(coords=[coord], shape=shape)[0]
+
+# coord = obj_box_coord_rescale(coord=[30, 40, 50, 50], shape=[100, 100])
+# print(coord) #[[0.15, 0.4, 0.25, 0.5]]
+# exit()
+
+def obj_box_coord_scale_to_pixelunit(coord, shape=(100, 100, 3)):
+    """ Convert one coordinate [x, y, w (or x2), h (or y2)] in ratio format to image coordinate format.
+    It is the reverse process of ``obj_box_coord_rescale``.
+
+    Parameters
+    -----------
+    coord : list of float, [x, y, w (or x2), h (or y2)] in ratio format, i.e value range [0~1].
+    shape : tuple of (height, width, channel (optional))
+
+    Examples
+    ---------
+    >>> x, y, x2, y2 = obj_box_coord_scale_to_pixelunit([0.2, 0.3, 0.5, 0.7], shape=(100, 200, 3))
+    ... (40, 30, 100, 70)
+    """
+    imh, imw = shape[0:2]
+    x  = int(coord[0]*imw)
+    x2 = int(coord[2]*imw)
+    y  = int(coord[1]*imh)
+    y2 = int(coord[3]*imh)
+    return [x, y, x2, y2]
+
+# coords = obj_box_coords_rescale(coords=[[30, 40, 50, 50], [10, 10, 20, 20]], shape=[100, 100])
+# print(coords)
+#     # ... [[0.3, 0.4, 0.5, 0.5], [0.1, 0.1, 0.2, 0.2]]
+# coords = obj_box_coords_rescale(coords=[[30, 40, 50, 50]], shape=[50, 100])
+# print(coords)
+#     # ... [[0.3, 0.8, 0.5, 1.0]]
+# coords = obj_box_coords_rescale(coords=[[30, 40, 50, 50]], shape=[100, 200])
+# print(coords)
+#     # ... [[0.15, 0.4, 0.25, 0.5]]
+# exit()
+
+def obj_box_coord_centroid_to_upleft_butright(coord, to_int=False):
+    """ Convert one coordinate [x_center, y_center, w, h] to [x1, y1, x2, y2] in up-left and botton-right format.
+
+    Examples
+    ---------
+    >>> coord = obj_box_coord_centroid_to_upleft_butright([30, 40, 20, 20])
+    ... [20, 30, 40, 50]
+    """
+    assert len(coord) == 4,  "coordinate should be 4 values : [x, y, w, h]"
+    x_center, y_center, w, h = coord
+    x  = x_center - w / 2.
+    y  = y_center - h / 2.
+    x2 = x + w
+    y2 = y + h
+    if to_int:
+        return [int(x), int(y), int(x2), int(y2)]
+    else:
+        return [x, y, x2, y2]
+
+# coord = obj_box_coord_centroid_to_upleft_butright([30, 40, 20, 20])
+# print(coord)    [20, 30, 40, 50]
+# exit()
+
+def obj_box_coord_upleft_butright_to_centroid(coord):
+    """ Convert one coordinate [x1, y1, x2, y2] to [x_center, y_center, w, h].
+    It is the reverse process of ``obj_box_coord_centroid_to_upleft_butright``.
+    """
+    assert len(coord) == 4,  "coordinate should be 4 values : [x1, y1, x2, y2]"
+    x1, y1, x2, y2 = coord
+    w = x2 - x1
+    h = y2 - y1
+    x_c = x1 + w / 2.
+    y_c = y1 + h / 2.
+    return [x_c, y_c, w, h]
+
+
+def obj_box_coord_centroid_to_upleft(coord):
+    """ Convert one coordinate [x_center, y_center, w, h] to [x, y, w, h].
+    It is the reverse process of ``obj_box_coord_upleft_to_centroid``.
+    """
+    assert len(coord) == 4,  "coordinate should be 4 values : [x, y, w, h]"
+    x_center, y_center, w, h = coord
+    x  = x_center - w / 2.
+    y  = y_center - h / 2.
+    return [x, y, w, h]
+
+def obj_box_coord_upleft_to_centroid(coord):
+    """ Convert one coordinate [x, y, w, h] to [x_center, y_center, w, h].
+    It is the reverse process of ``obj_box_coord_centroid_to_upleft``.
+    """
+    assert len(coord) == 4,  "coordinate should be 4 values : [x, y, w, h]"
+    x, y, w, h = coord
+    x_center = x + w / 2.
+    y_center = y + h / 2.
+    return [x_center, y_center, w, h]
+
+##
+def parse_darknet_ann_str_to_list(annotation):
+    """ Input string format of class, x, y, w, h, return list of list format.
+    """
+    annotation = annotation.split("\n")
+    ann = []
+    for a in annotation:
+        a = a.split()
+        if len(a) == 5:
+            for i in range(len(a)):
+                if i == 0:
+                    a[i] = int(a[i])
+                else:
+                    a[i] = float(a[i])
+            ann.append(a)
+    return ann
+
+def parse_darknet_ann_list_to_cls_box(annotation):
+    """ Input list of [[class, x, y, w, h], ...], return two list of [class ...] and [[x, y, w, h], ...].
+    """
+    class_list = []
+    bbox_list = []
+    for i in range(len(annotation)):
+        class_list.append( annotation[i][0] )
+        bbox_list.append( annotation[i][1:] )
+    return class_list, bbox_list
+
+
+def obj_box_left_right_flip(im, coords=[], is_rescale=False, is_center=False, is_random=False):
+    """Left-right flip the image and coordinates for object detection.
+
+    Parameters
+    ----------
+    im : numpy array
+        An image with dimension of [row, col, channel] (default).
+    coords : list of list for coordinates [[x, y, w, h], [x, y, w, h], ...]
+    is_rescale : boolean, default False
+        Set to True, if the input coordinates are rescaled to [0, 1].
+    is_center : boolean, default False
+        Set to True, if the x and y of coordinates are the centroid. (i.e. darknet format)
+    is_random : boolean, default False
+        If True, randomly flip.
+
+    Examples
+    --------
+    >>> im = np.zeros([80, 100])    # as an image with shape width=100, height=80
+    >>> im, coords = obj_box_left_right_flip(im, coords=[[0.2, 0.4, 0.3, 0.3], [0.1, 0.5, 0.2, 0.3]], is_rescale=True, is_center=True, is_random=False)
+    >>> print(coords)
+    ... [[0.8, 0.4, 0.3, 0.3], [0.9, 0.5, 0.2, 0.3]]
+    >>> im, coords = obj_box_left_right_flip(im, coords=[[0.2, 0.4, 0.3, 0.3]], is_rescale=True, is_center=False, is_random=False)
+    >>> print(coords)
+    ... [[0.5, 0.4, 0.3, 0.3]]
+    >>> im, coords = obj_box_left_right_flip(im, coords=[[20, 40, 30, 30]], is_rescale=False, is_center=True, is_random=False)
+    >>> print(coords)
+    ... [[80, 40, 30, 30]]
+    >>> im, coords = obj_box_left_right_flip(im, coords=[[20, 40, 30, 30]], is_rescale=False, is_center=False, is_random=False)
+    >>> print(coords)
+    ... [[50, 40, 30, 30]]
+    """
+    def _flip(im, coords):
+        im = flip_axis(im, axis=1, is_random=False)
+        coords_new = list()
+
+        for coord in coords:
+            assert len(coord) == 4, "coordinate should be 4 values : [x, y, w, h]"
+            if is_rescale:
+                if is_center:
+                    # x_center' = 1 - x
+                    x = 1. - coord[0]
+                else:
+                    # x_center' = 1 - x - w
+                    x = 1. - coord[0] - coord[2]
+            else:
+                if is_center:
+                    # x' = im.width - x
+                    x = im.shape[1] - coord[0]
+                else:
+                    # x' = im.width - x - w
+                    x = im.shape[1] - coord[0] - coord[2]
+            coords_new.append([x, coord[1], coord[2], coord[3]])
+        return im, coords_new
+
+    if is_random:
+        factor = np.random.uniform(-1, 1)
+        if factor > 0:
+            return _flip(im, coords)
+        else:
+            return im, coords
+    else:
+        return _flip(im, coords)
+
+# im = np.zeros([80, 100])    # as an image with shape width=100, height=80
+# im, coords = obj_box_left_right_flip(im, coords=[[0.2, 0.4, 0.3, 0.3], [0.1, 0.5, 0.2, 0.3]], is_rescale=True, is_center=True, is_random=False)
+# print(coords)
+# # ... [[0.8, 0.4, 0.3, 0.3], [0.9, 0.5, 0.2, 0.3]]
+# im, coords = obj_box_left_right_flip(im, coords=[[0.2, 0.4, 0.3, 0.3]], is_rescale=True, is_center=False, is_random=False)
+# print(coords)
+# # [[0.5, 0.4, 0.3, 0.3]]
+# im, coords = obj_box_left_right_flip(im, coords=[[20, 40, 30, 30]], is_rescale=False, is_center=True, is_random=False)
+# print(coords)
+# # ... [[80, 40, 30, 30]]
+# im, coords = obj_box_left_right_flip(im, coords=[[20, 40, 30, 30]], is_rescale=False, is_center=False, is_random=False)
+# print(coords)
+# # [[50, 40, 30, 30]]
+# exit()
+
+def obj_box_imresize(im, coords=[], size=[100, 100], interp='bicubic', mode=None, is_rescale=False):
+    """Resize an image, and compute the new bounding box coordinates.
+
+    Parameters
+    -------------
+    im : numpy array
+        An image with dimension of [row, col, channel] (default).
+    coords : list of list for coordinates [[x, y, w, h], [x, y, w, h], ...]
+    size, interp, mode : see ``tl.prepro.imresize`` for details.
+    is_rescale : boolean, default False
+        Set to True, if the input coordinates are rescaled to [0, 1], then return the original coordinates.
+
+    Examples
+    --------
+    >>> im = np.zeros([80, 100, 3])    # as an image with shape width=100, height=80
+    >>> _, coords = obj_box_imresize(im, coords=[[20, 40, 30, 30], [10, 20, 20, 20]], size=[160, 200], is_rescale=False)
+    >>> print(coords)
+    ... [[40, 80, 60, 60], [20, 40, 40, 40]]
+    >>> _, coords = obj_box_imresize(im, coords=[[20, 40, 30, 30]], size=[40, 100], is_rescale=False)
+    >>> print(coords)
+    ... [20, 20, 30, 15]
+    >>> _, coords = obj_box_imresize(im, coords=[[20, 40, 30, 30]], size=[60, 150], is_rescale=False)
+    >>> print(coords)
+    ... [30, 30, 45, 22]
+    >>> im2, coords = obj_box_imresize(im, coords=[[0.2, 0.4, 0.3, 0.3]], size=[160, 200], is_rescale=True)
+    >>> print(coords, im2.shape)
+    ... [0.2, 0.4, 0.3, 0.3] (160, 200, 3)
+    """
+    imh, imw = im.shape[0:2]
+    imh = imh * 1.0 # * 1.0 for python2 : force division to be float point
+    imw = imw * 1.0
+    im = imresize(im, size=size, interp=interp, mode=mode)
+
+    if is_rescale is False:
+        coords_new = list()
+        for coord in coords:
+            assert len(coord) == 4, "coordinate should be 4 values : [x, y, w, h]"
+            # x' = x * (imw'/imw)
+            x = int(coord[0] * (size[1]/imw))
+            # y' = y * (imh'/imh)
+            # print('>>', coord[1], size[0], imh)
+            y = int(coord[1] * (size[0]/imh))
+            # w' = w * (imw'/imw)
+            w = int(coord[2] * (size[1]/imw))
+            # h' = h * (imh'/imh)
+            h = int(coord[3] * (size[0]/imh))
+            coords_new.append([x, y, w, h])
+        return im, coords_new
+    else:
+        return im, coords
+
+# im = np.zeros([80, 100, 3])    # as an image with shape width=100, height=80
+# _, coords = obj_box_imresize(im, coords=[[20, 40, 30, 30], [10, 20, 20, 20]], size=[160, 200], is_rescale=False)
+# print(coords)
+# # ... [[40, 80, 60, 60], [20, 40, 40, 40]]
+# _, coords = obj_box_imresize(im, coords=[[20, 40, 30, 30]], size=[40, 100], is_rescale=False)
+# print(coords)
+# # ... [20, 20, 30, 15]
+# _, coords = obj_box_imresize(im, coords=[[20, 40, 30, 30]], size=[60, 150], is_rescale=False)
+# print(coords)
+# # ... [30, 30, 45, 22]
+# im2, coords = obj_box_imresize(im, coords=[[0.2, 0.4, 0.3, 0.3]], size=[160, 200], is_rescale=True)
+# print(coords, im2.shape)
+# # ... [0.2, 0.4, 0.3, 0.3] (160, 200, 3)
+# exit()
+
+def obj_box_crop(im, classes=[], coords=[], wrg=100, hrg=100,
+    is_rescale=False, is_center=False, is_random=False,
+    thresh_wh=0.02, thresh_wh2=12.):
+    """Randomly or centrally crop an image, and compute the new bounding box coordinates.
+    Objects outside the cropped image will be removed.
+
+    Parameters
+    -----------
+    im : numpy array
+        An image with dimension of [row, col, channel] (default).
+    classes : list of class ID (int).
+    coords : list of list for coordinates [[x, y, w, h], [x, y, w, h], ...]
+    wrg, hrg, is_random : see ``tl.prepro.crop`` for details.
+    is_rescale : boolean, default False
+        Set to True, if the input coordinates are rescaled to [0, 1].
+    is_center : boolean, default False
+        Set to True, if the x and y of coordinates are the centroid. (i.e. darknet format)
+    thresh_wh : float
+        Threshold, remove the box if its ratio of width(height) to image size less than the threshold.
+    thresh_wh2 : float
+        Threshold, remove the box if its ratio of width to height or vice verse higher than the threshold.
+    """
+    h, w = im.shape[0], im.shape[1]
+    assert (h > hrg) and (w > wrg), "The size of cropping should smaller than the original image"
+    if is_random:
+        h_offset = int(np.random.uniform(0, h-hrg) -1)
+        w_offset = int(np.random.uniform(0, w-wrg) -1)
+        h_end = hrg + h_offset
+        w_end = wrg + w_offset
+        im_new = im[h_offset: h_end ,w_offset: w_end]
+    else:   # central crop
+        h_offset = int(np.floor((h - hrg)/2.))
+        w_offset = int(np.floor((w - wrg)/2.))
+        h_end = h_offset + hrg
+        w_end = w_offset + wrg
+        im_new = im[h_offset: h_end, w_offset: w_end]
+
+    #              w
+    #   _____________________________
+    #   |  h/w offset               |
+    #   |       -------             |
+    # h |       |     |             |
+    #   |       |     |             |
+    #   |       -------             |
+    #   |            h/w end        |
+    #   |___________________________|
+
+    def _get_coord(coord):
+        """ Input pixel-unit [x, y, w, h] format, then make sure [x, y] it is the up-left coordinates,
+        before getting the new coordinates.
+        Boxes outsides the cropped image will be removed.
+        """
+        if is_center:
+            coord = obj_box_coord_centroid_to_upleft(coord)
+
+        ##======= pixel unit format and upleft, w, h ==========##
+
+        # x = np.clip( coord[0] - w_offset, 0, w_end - w_offset)
+        # y = np.clip( coord[1] - h_offset, 0, h_end - h_offset)
+        # w = np.clip( coord[2]           , 0, w_end - w_offset)
+        # h = np.clip( coord[3]           , 0, h_end - h_offset)
+
+        x = coord[0] - w_offset
+        y = coord[1] - h_offset
+        w = coord[2]
+        h = coord[3]
+
+        if x < 0:
+            if x + w <= 0:
+                return None
+            w = w + x
+            x = 0
+        elif x > im_new.shape[1]:   # object outside the cropped image
+            return None
+
+        if y < 0:
+            if y + h <= 0:
+                return None
+            h = h + y
+            y = 0
+        elif y > im_new.shape[0]:   # object outside the cropped image
+            return None
+
+        if (x is not None) and (x + w > im_new.shape[1]):   # box outside the cropped image
+            w = im_new.shape[1] - x
+
+        if (y is not None) and (y + h > im_new.shape[0]):   # box outside the cropped image
+            h = im_new.shape[0] - y
+
+        if (w / (h+1.) > thresh_wh2) or (h / (w+1.) > thresh_wh2):           # object shape strange: too narrow
+            # print('xx', w, h)
+            return None
+
+        if (w / (im_new.shape[1]*1.) < thresh_wh) or (h / (im_new.shape[0]*1.) < thresh_wh):    # object shape strange: too narrow
+            # print('yy', w, im_new.shape[1], h, im_new.shape[0])
+            return None
+
+        coord = [x, y, w, h]
+
+        ## convert back if input format is center.
+        if is_center:
+            coord = obj_box_coord_upleft_to_centroid(coord)
+
+        return coord
+
+    coords_new = list()
+    classes_new = list()
+    for i in range(len(coords)):
+        coord = coords[i]
+        assert len(coord) == 4, "coordinate should be 4 values : [x, y, w, h]"
+        if is_rescale:
+            """ for scaled coord, upscaled before process and scale back in the end. """
+            coord = obj_box_coord_scale_to_pixelunit(coord, im.shape)
+            coord = _get_coord(coord)
+            if coord is not None:
+                coord = obj_box_coord_rescale(coord, im_new.shape)
+                coords_new.append(coord)
+                classes_new.append(classes[i])
+        else:
+            coord = _get_coord(coord)
+            if coord is not None:
+                coords_new.append(coord)
+                classes_new.append(classes[i])
+    return im_new, classes_new, coords_new
+
+def obj_box_shift(im, classes=[], coords=[], wrg=0.1, hrg=0.1,
+    row_index=0, col_index=1, channel_index=2,
+    fill_mode='nearest', cval=0., order=1,
+    is_rescale=False, is_center=False, is_random=False,
+    thresh_wh=0.02, thresh_wh2=12.):
+    """ Shift an image randomly or non-randomly, and compute the new bounding box coordinates.
+    Objects outside the cropped image will be removed.
+
+    Parameters
+    -----------
+    im : numpy array
+        An image with dimension of [row, col, channel] (default).
+    classes : list of class ID (int).
+    coords : list of list for coordinates [[x, y, w, h], [x, y, w, h], ...]
+    wrg, hrg, row_index, col_index, channel_index, is_random, fill_mode, cval, order : see ``tl.prepro.shift``.
+    is_rescale : boolean, default False
+        Set to True, if the input coordinates are rescaled to [0, 1].
+    is_center : boolean, default False
+        Set to True, if the x and y of coordinates are the centroid. (i.e. darknet format)
+    thresh_wh : float
+        Threshold, remove the box if its ratio of width(height) to image size less than the threshold.
+    thresh_wh2 : float
+        Threshold, remove the box if its ratio of width to height or vice verse higher than the threshold.
+    """
+    imh, imw = im.shape[row_index], im.shape[col_index]
+    assert (hrg < 1.0) and (hrg > 0.) and (wrg < 1.0) and (wrg > 0.) , "shift range should be (0, 1)"
+    if is_random:
+        tx = np.random.uniform(-hrg, hrg) * imh
+        ty = np.random.uniform(-wrg, wrg) * imw
+    else:
+        tx, ty = hrg * imh, wrg * imw
+    translation_matrix = np.array([[1, 0, tx],
+                                   [0, 1, ty],
+                                   [0, 0, 1]])
+
+    transform_matrix = translation_matrix  # no need to do offset
+    im_new = apply_transform(im, transform_matrix, channel_index, fill_mode, cval, order)
+
+    # modified from obj_box_crop
+    def _get_coord(coord):
+        """ Input pixel-unit [x, y, w, h] format, then make sure [x, y] it is the up-left coordinates,
+        before getting the new coordinates.
+        Boxes outsides the cropped image will be removed.
+        """
+        if is_center:
+            coord = obj_box_coord_centroid_to_upleft(coord)
+
+        ##======= pixel unit format and upleft, w, h ==========##
+        x = coord[0] - ty   # only change this
+        y = coord[1] - tx   # only change this
+        w = coord[2]
+        h = coord[3]
+
+        if x < 0:
+            if x + w <= 0:
+                return None
+            w = w + x
+            x = 0
+        elif x > im_new.shape[1]:   # object outside the cropped image
+            return None
+
+        if y < 0:
+            if y + h <= 0:
+                return None
+            h = h + y
+            y = 0
+        elif y > im_new.shape[0]:   # object outside the cropped image
+            return None
+
+        if (x is not None) and (x + w > im_new.shape[1]):   # box outside the cropped image
+            w = im_new.shape[1] - x
+
+        if (y is not None) and (y + h > im_new.shape[0]):   # box outside the cropped image
+            h = im_new.shape[0] - y
+
+        if (w / (h+1.) > thresh_wh2) or (h / (w+1.) > thresh_wh2):           # object shape strange: too narrow
+            # print('xx', w, h)
+            return None
+
+        if (w / (im_new.shape[1]*1.) < thresh_wh) or (h / (im_new.shape[0]*1.) < thresh_wh):    # object shape strange: too narrow
+            # print('yy', w, im_new.shape[1], h, im_new.shape[0])
+            return None
+
+        coord = [x, y, w, h]
+
+        ## convert back if input format is center.
+        if is_center:
+            coord = obj_box_coord_upleft_to_centroid(coord)
+
+        return coord
+
+    coords_new = list()
+    classes_new = list()
+    for i in range(len(coords)):
+        coord = coords[i]
+        assert len(coord) == 4, "coordinate should be 4 values : [x, y, w, h]"
+        if is_rescale:
+            """ for scaled coord, upscaled before process and scale back in the end. """
+            coord = obj_box_coord_scale_to_pixelunit(coord, im.shape)
+            coord = _get_coord(coord)
+            if coord is not None:
+                coord = obj_box_coord_rescale(coord, im_new.shape)
+                coords_new.append(coord)
+                classes_new.append(classes[i])
+        else:
+            coord = _get_coord(coord)
+            if coord is not None:
+                coords_new.append(coord)
+                classes_new.append(classes[i])
+    return im_new, classes_new, coords_new
+
+def obj_box_zoom(im, classes=[], coords=[], zoom_range=(0.9, 1.1),
+    row_index=0, col_index=1, channel_index=2, fill_mode='nearest', cval=0., order=1,
+    is_rescale=False, is_center=False, is_random=False,
+    thresh_wh=0.02, thresh_wh2=12.):
+    """Zoom in and out of a single image, randomly or non-randomly, and compute the new bounding box coordinates.
+    Objects outside the cropped image will be removed.
+
+    Parameters
+    -----------
+    im : numpy array
+        An image with dimension of [row, col, channel] (default).
+    classes : list of class ID (int).
+    coords : list of list for coordinates [[x, y, w, h], [x, y, w, h], ...]
+    zoom_range, row_index, col_index, channel_index, is_random, fill_mode, cval, order : see ``tl.prepro.zoom``.
+    is_rescale : boolean, default False
+        Set to True, if the input coordinates are rescaled to [0, 1].
+    is_center : boolean, default False
+        Set to True, if the x and y of coordinates are the centroid. (i.e. darknet format)
+    thresh_wh : float
+        Threshold, remove the box if its ratio of width(height) to image size less than the threshold.
+    thresh_wh2 : float
+        Threshold, remove the box if its ratio of width to height or vice verse higher than the threshold.
+    """
+    if len(zoom_range) != 2:
+        raise Exception('zoom_range should be a tuple or list of two floats. '
+                        'Received arg: ', zoom_range)
+    if is_random:
+        if zoom_range[0] == 1 and zoom_range[1] == 1:
+            zx, zy = 1, 1
+            print(" random_zoom : not zoom in/out")
+        else:
+            zx, zy = np.random.uniform(zoom_range[0], zoom_range[1], 2)
+    else:
+        zx, zy = zoom_range
+    # print(zx, zy)
+    zoom_matrix = np.array([[zx, 0, 0],
+                            [0, zy, 0],
+                            [0, 0, 1]])
+
+    h, w = im.shape[row_index], im.shape[col_index]
+    transform_matrix = transform_matrix_offset_center(zoom_matrix, h, w)
+    im_new = apply_transform(im, transform_matrix, channel_index, fill_mode, cval, order)
+
+
+    # modified from obj_box_crop
+    def _get_coord(coord):
+        """ Input pixel-unit [x, y, w, h] format, then make sure [x, y] it is the up-left coordinates,
+        before getting the new coordinates.
+        Boxes outsides the cropped image will be removed.
+        """
+        if is_center:
+            coord = obj_box_coord_centroid_to_upleft(coord)
+
+        ##======= pixel unit format and upleft, w, h ==========##
+        x = (coord[0] - im.shape[1]/2) / zy + im.shape[1]/2   # only change this
+        y = (coord[1] - im.shape[0]/2) / zx + im.shape[0]/2  # only change this
+        w = coord[2] / zy   # only change this
+        h = coord[3] / zx   # only change thisS
+
+        if x < 0:
+            if x + w <= 0:
+                return None
+            w = w + x
+            x = 0
+        elif x > im_new.shape[1]:   # object outside the cropped image
+            return None
+
+        if y < 0:
+            if y + h <= 0:
+                return None
+            h = h + y
+            y = 0
+        elif y > im_new.shape[0]:   # object outside the cropped image
+            return None
+
+        if (x is not None) and (x + w > im_new.shape[1]):   # box outside the cropped image
+            w = im_new.shape[1] - x
+
+        if (y is not None) and (y + h > im_new.shape[0]):   # box outside the cropped image
+            h = im_new.shape[0] - y
+
+        if (w / (h+1.) > thresh_wh2) or (h / (w+1.) > thresh_wh2):           # object shape strange: too narrow
+            # print('xx', w, h)
+            return None
+
+        if (w / (im_new.shape[1]*1.) < thresh_wh) or (h / (im_new.shape[0]*1.) < thresh_wh):    # object shape strange: too narrow
+            # print('yy', w, im_new.shape[1], h, im_new.shape[0])
+            return None
+
+        coord = [x, y, w, h]
+
+        ## convert back if input format is center.
+        if is_center:
+            coord = obj_box_coord_upleft_to_centroid(coord)
+
+        return coord
+
+    coords_new = list()
+    classes_new = list()
+    for i in range(len(coords)):
+        coord = coords[i]
+        assert len(coord) == 4, "coordinate should be 4 values : [x, y, w, h]"
+        if is_rescale:
+            """ for scaled coord, upscaled before process and scale back in the end. """
+            coord = obj_box_coord_scale_to_pixelunit(coord, im.shape)
+            coord = _get_coord(coord)
+            if coord is not None:
+                coord = obj_box_coord_rescale(coord, im_new.shape)
+                coords_new.append(coord)
+                classes_new.append(classes[i])
+        else:
+            coord = _get_coord(coord)
+            if coord is not None:
+                coords_new.append(coord)
+                classes_new.append(classes[i])
+    return im_new, classes_new, coords_new
+
 
 
 
@@ -1342,7 +2330,34 @@ def pad_sequences(sequences, maxlen=None, dtype='int32', padding='post', truncat
             x[idx, -len(trunc):] = trunc
         else:
             raise ValueError('Padding type "%s" not understood' % padding)
-    return x
+    return x.tolist()
+
+def remove_pad_sequences(sequences, pad_id=0):
+    """Remove padding.
+
+    Parameters
+    -----------
+    sequences : list of list.
+    pad_id : int.
+
+    Examples
+    ----------
+    >>> sequences = [[2,3,4,0,0], [5,1,2,3,4,0,0,0], [4,5,0,2,4,0,0,0]]
+    >>> print(remove_pad_sequences(sequences, pad_id=0))
+    ... [[2, 3, 4], [5, 1, 2, 3, 4], [4, 5, 0, 2, 4]]
+    """
+    import copy
+    sequences_out = copy.deepcopy(sequences)
+    for i in range(len(sequences)):
+        # for j in range(len(sequences[i])):
+        #     if sequences[i][j] == pad_id:
+        #         sequences_out[i] = sequences_out[i][:j]
+        #         break
+        for j in range(1, len(sequences[i])):
+            if sequences[i][-j] != pad_id:
+                sequences_out[i] = sequences_out[i][0:-j+1]
+                break
+    return sequences_out
 
 def process_sequences(sequences, end_id=0, pad_val=0, is_shorten=True, remain_end_id=False):
     """Set all tokens(ids) after END token to the padding value, and then shorten (option) it to the maximum sequence length in this batch.
@@ -1409,6 +2424,63 @@ def sequences_add_start_id(sequences, start_id=0, remove_last=False):
             sequences_out[i] = [start_id] + sequences[i]
     return sequences_out
 
+def sequences_add_end_id(sequences, end_id=888):
+    """Add special end token(id) in the end of each sequence.
+
+    Parameters
+    -----------
+    sequences : list of list.
+    end_id : int.
+
+    Examples
+    ---------
+    >>> sequences = [[1,2,3],[4,5,6,7]]
+    >>> print(sequences_add_end_id(sequences, end_id=999))
+    ... [[1, 2, 3, 999], [4, 5, 6, 999]]
+    """
+    sequences_out = [[] for _ in range(len(sequences))]#[[]] * len(sequences)
+    for i in range(len(sequences)):
+        sequences_out[i] = sequences[i] + [end_id]
+    return sequences_out
+
+
+def sequences_add_end_id_after_pad(sequences, end_id=888, pad_id=0):
+    """Add special end token(id) in the end of each sequence.
+
+    Parameters
+    -----------
+    sequences : list of list.
+    end_id : int.
+    pad_id : int.
+
+    Examples
+    ---------
+    >>> sequences = [[1,2,0,0], [1,2,3,0], [1,2,3,4]]
+    >>> print(sequences_add_end_id_after_pad(sequences, end_id=99, pad_id=0))
+    ... [[1, 2, 99, 0], [1, 2, 3, 99], [1, 2, 3, 4]]
+    """
+    # sequences_out = [[] for _ in range(len(sequences))]#[[]] * len(sequences)
+    import copy
+    sequences_out = copy.deepcopy(sequences)
+    # # add a pad to all
+    # for i in range(len(sequences)):
+    #     for j in range(len(sequences[i])):
+    #         sequences_out[i].append(pad_id)
+    # # pad -- > end
+    # max_len = 0
+    for i in range(len(sequences)):
+        for j in range(len(sequences[i])):
+            if sequences[i][j] == pad_id:
+                sequences_out[i][j] = end_id
+                # if j > max_len:
+                #     max_len = j
+                break
+    # # remove pad if too long
+    # for i in range(len(sequences)):
+    #     for j in range(len(sequences[i])):
+    #         sequences_out[i] = sequences_out[i][:max_len+1]
+    return sequences_out
+
 def sequences_get_mask(sequences, pad_val=0):
     """Return mask for sequences.
 
@@ -1435,171 +2507,165 @@ def sequences_get_mask(sequences, pad_val=0):
 
 
 ## Tensor Opt
-def distorted_images(images=None, height=24, width=24):
-    """Distort images for generating more training data.
-
-    Features
-    ---------
-    They are cropped to height * width pixels randomly.
-
-    They are approximately whitened to make the model insensitive to dynamic range.
-
-    Randomly flip the image from left to right.
-
-    Randomly distort the image brightness.
-
-    Randomly distort the image contrast.
-
-    Whiten (Normalize) the images.
-
-    Parameters
-    ----------
-    images : 4D Tensor
-        The tensor or placeholder of images
-    height : int
-        The height for random crop.
-    width : int
-        The width for random crop.
-
-    Returns
-    -------
-    result : tuple of Tensor
-        (Tensor for distorted images, Tensor for while loop index)
-
-    Examples
-    --------
-    >>> X_train, y_train, X_test, y_test = tl.files.load_cifar10_dataset(shape=(-1, 32, 32, 3), plotable=False)
-    >>> sess = tf.InteractiveSession()
-    >>> batch_size = 128
-    >>> x = tf.placeholder(tf.float32, shape=[batch_size, 32, 32, 3])
-    >>> distorted_images_op = tl.preprocess.distorted_images(images=x, height=24, width=24)
-    >>> sess.run(tf.initialize_all_variables())
-    >>> feed_dict={x: X_train[0:batch_size,:,:,:]}
-    >>> distorted_images, idx = sess.run(distorted_images_op, feed_dict=feed_dict)
-    >>> tl.visualize.images2d(X_train[0:9,:,:,:], second=2, saveable=False, name='cifar10', dtype=np.uint8, fig_idx=20212)
-    >>> tl.visualize.images2d(distorted_images[1:10,:,:,:], second=10, saveable=False, name='distorted_images', dtype=None, fig_idx=23012)
-
-    Notes
-    ------
-    - The first image in 'distorted_images' should be removed.
-
-    References
-    -----------
-    - `tensorflow.models.image.cifar10.cifar10_input <https://github.com/tensorflow/tensorflow/blob/r0.9/tensorflow/models/image/cifar10/cifar10_input.py>`_
-    """
-    print("This function is deprecated, please use tf.map_fn instead, e.g:\n   \
-            t_image = tf.map_fn(lambda img: tf.image.random_brightness(img, max_delta=32. / 255.), t_image)\n \
-            t_image = tf.map_fn(lambda img: tf.image.random_contrast(img, lower=0.5, upper=1.5), t_image)\n \
-            t_image = tf.map_fn(lambda img: tf.image.random_saturation(img, lower=0.5, upper=1.5), t_image)\n \
-            t_image = tf.map_fn(lambda img: tf.image.random_hue(img, max_delta=0.032), t_image)")
-    exit()
-    # print(" [Warning] distorted_images will be deprecated due to speed, see TFRecord tutorial for more info...")
-    try:
-        batch_size = int(images._shape[0])
-    except:
-        raise Exception('unknow batch_size of images')
-    distorted_x = tf.Variable(tf.constant(0.1, shape=[1, height, width, 3]))
-    i = tf.Variable(tf.constant(0))
-
-    c = lambda distorted_x, i: tf.less(i, batch_size)
-
-    def body(distorted_x, i):
-        # 1. Randomly crop a [height, width] section of the image.
-        image = tf.random_crop(tf.gather(images, i), [height, width, 3])
-        # 2. Randomly flip the image horizontally.
-        image = tf.image.random_flip_left_right(image)
-        # 3. Randomly change brightness.
-        image = tf.image.random_brightness(image, max_delta=63)
-        # 4. Randomly change contrast.
-        image = tf.image.random_contrast(image, lower=0.2, upper=1.8)
-        # 5. Subtract off the mean and divide by the variance of the pixels.
-        image = tf.image.per_image_whitening(image)
-        # 6. Append the image to a batch.
-        image = tf.expand_dims(image, 0)
-        return tf.concat(0, [distorted_x, image]), tf.add(i, 1)
-
-    result = tf.while_loop(cond=c, body=body, loop_vars=(distorted_x, i), parallel_iterations=16)
-    return result
-
-
-def crop_central_whiten_images(images=None, height=24, width=24):
-    """Crop the central of image, and normailize it for test data.
-
-    They are cropped to central of height * width pixels.
-
-    Whiten (Normalize) the images.
-
-    Parameters
-    ----------
-    images : 4D Tensor
-        The tensor or placeholder of images
-    height : int
-        The height for central crop.
-    width : int
-        The width for central crop.
-
-    Returns
-    -------
-    result : tuple Tensor
-        (Tensor for distorted images, Tensor for while loop index)
-
-    Examples
-    --------
-    >>> X_train, y_train, X_test, y_test = tl.files.load_cifar10_dataset(shape=(-1, 32, 32, 3), plotable=False)
-    >>> sess = tf.InteractiveSession()
-    >>> batch_size = 128
-    >>> x = tf.placeholder(tf.float32, shape=[batch_size, 32, 32, 3])
-    >>> central_images_op = tl.preprocess.crop_central_whiten_images(images=x, height=24, width=24)
-    >>> sess.run(tf.initialize_all_variables())
-    >>> feed_dict={x: X_train[0:batch_size,:,:,:]}
-    >>> central_images, idx = sess.run(central_images_op, feed_dict=feed_dict)
-    >>> tl.visualize.images2d(X_train[0:9,:,:,:], second=2, saveable=False, name='cifar10', dtype=np.uint8, fig_idx=20212)
-    >>> tl.visualize.images2d(central_images[1:10,:,:,:], second=10, saveable=False, name='central_images', dtype=None, fig_idx=23012)
-
-    Notes
-    ------
-    The first image in 'central_images' should be removed.
-
-    Code References
-    ----------------
-    - ``tensorflow.models.image.cifar10.cifar10_input``
-    """
-    print("This function is deprecated, please use tf.map_fn instead, e.g:\n   \
-            t_image = tf.map_fn(lambda img: tf.image.random_brightness(img, max_delta=32. / 255.), t_image)\n \
-            t_image = tf.map_fn(lambda img: tf.image.random_contrast(img, lower=0.5, upper=1.5), t_image)\n \
-            t_image = tf.map_fn(lambda img: tf.image.random_saturation(img, lower=0.5, upper=1.5), t_image)\n \
-            t_image = tf.map_fn(lambda img: tf.image.random_hue(img, max_delta=0.032), t_image)")
-    exit()
-    # print(" [Warning] crop_central_whiten_images will be deprecated due to speed, see TFRecord tutorial for more info...")
-    try:
-        batch_size = int(images._shape[0])
-    except:
-        raise Exception('unknow batch_size of images')
-    central_x = tf.Variable(tf.constant(0.1, shape=[1, height, width, 3]))
-    i = tf.Variable(tf.constant(0))
-
-    c = lambda central_x, i: tf.less(i, batch_size)
-
-    def body(central_x, i):
-        # 1. Crop the central [height, width] of the image.
-        image = tf.image.resize_image_with_crop_or_pad(tf.gather(images, i), height, width)
-        # 2. Subtract off the mean and divide by the variance of the pixels.
-        image = tf.image.per_image_whitening(image)
-        # 5. Append the image to a batch.
-        image = tf.expand_dims(image, 0)
-        return tf.concat(0, [central_x, image]), tf.add(i, 1)
-
-    result = tf.while_loop(cond=c, body=body, loop_vars=(central_x, i), parallel_iterations=16)
-    return result
-
-
-
-
-
-
-
-
-
+# def distorted_images(images=None, height=24, width=24):
+#     """Distort images for generating more training data.
+#
+#     Features
+#     ---------
+#     They are cropped to height * width pixels randomly.
+#
+#     They are approximately whitened to make the model insensitive to dynamic range.
+#
+#     Randomly flip the image from left to right.
+#
+#     Randomly distort the image brightness.
+#
+#     Randomly distort the image contrast.
+#
+#     Whiten (Normalize) the images.
+#
+#     Parameters
+#     ----------
+#     images : 4D Tensor
+#         The tensor or placeholder of images
+#     height : int
+#         The height for random crop.
+#     width : int
+#         The width for random crop.
+#
+#     Returns
+#     -------
+#     result : tuple of Tensor
+#         (Tensor for distorted images, Tensor for while loop index)
+#
+#     Examples
+#     --------
+#     >>> X_train, y_train, X_test, y_test = tl.files.load_cifar10_dataset(shape=(-1, 32, 32, 3), plotable=False)
+#     >>> sess = tf.InteractiveSession()
+#     >>> batch_size = 128
+#     >>> x = tf.placeholder(tf.float32, shape=[batch_size, 32, 32, 3])
+#     >>> distorted_images_op = tl.preprocess.distorted_images(images=x, height=24, width=24)
+#     >>> sess.run(tf.initialize_all_variables())
+#     >>> feed_dict={x: X_train[0:batch_size,:,:,:]}
+#     >>> distorted_images, idx = sess.run(distorted_images_op, feed_dict=feed_dict)
+#     >>> tl.visualize.images2d(X_train[0:9,:,:,:], second=2, saveable=False, name='cifar10', dtype=np.uint8, fig_idx=20212)
+#     >>> tl.visualize.images2d(distorted_images[1:10,:,:,:], second=10, saveable=False, name='distorted_images', dtype=None, fig_idx=23012)
+#
+#     Notes
+#     ------
+#     - The first image in 'distorted_images' should be removed.
+#
+#     References
+#     -----------
+#     - `tensorflow.models.image.cifar10.cifar10_input <https://github.com/tensorflow/tensorflow/blob/r0.9/tensorflow/models/image/cifar10/cifar10_input.py>`_
+#     """
+#     print("This function is deprecated, please use tf.map_fn instead, e.g:\n   \
+#             t_image = tf.map_fn(lambda img: tf.image.random_brightness(img, max_delta=32. / 255.), t_image)\n \
+#             t_image = tf.map_fn(lambda img: tf.image.random_contrast(img, lower=0.5, upper=1.5), t_image)\n \
+#             t_image = tf.map_fn(lambda img: tf.image.random_saturation(img, lower=0.5, upper=1.5), t_image)\n \
+#             t_image = tf.map_fn(lambda img: tf.image.random_hue(img, max_delta=0.032), t_image)")
+#     exit()
+#     # print(" [Warning] distorted_images will be deprecated due to speed, see TFRecord tutorial for more info...")
+#     try:
+#         batch_size = int(images._shape[0])
+#     except:
+#         raise Exception('unknow batch_size of images')
+#     distorted_x = tf.Variable(tf.constant(0.1, shape=[1, height, width, 3]))
+#     i = tf.Variable(tf.constant(0))
+#
+#     c = lambda distorted_x, i: tf.less(i, batch_size)
+#
+#     def body(distorted_x, i):
+#         # 1. Randomly crop a [height, width] section of the image.
+#         image = tf.random_crop(tf.gather(images, i), [height, width, 3])
+#         # 2. Randomly flip the image horizontally.
+#         image = tf.image.random_flip_left_right(image)
+#         # 3. Randomly change brightness.
+#         image = tf.image.random_brightness(image, max_delta=63)
+#         # 4. Randomly change contrast.
+#         image = tf.image.random_contrast(image, lower=0.2, upper=1.8)
+#         # 5. Subtract off the mean and divide by the variance of the pixels.
+#         image = tf.image.per_image_whitening(image)
+#         # 6. Append the image to a batch.
+#         image = tf.expand_dims(image, 0)
+#         return tf.concat(0, [distorted_x, image]), tf.add(i, 1)
+#
+#     result = tf.while_loop(cond=c, body=body, loop_vars=(distorted_x, i), parallel_iterations=16)
+#     return result
+#
+#
+# def crop_central_whiten_images(images=None, height=24, width=24):
+#     """Crop the central of image, and normailize it for test data.
+#
+#     They are cropped to central of height * width pixels.
+#
+#     Whiten (Normalize) the images.
+#
+#     Parameters
+#     ----------
+#     images : 4D Tensor
+#         The tensor or placeholder of images
+#     height : int
+#         The height for central crop.
+#     width : int
+#         The width for central crop.
+#
+#     Returns
+#     -------
+#     result : tuple Tensor
+#         (Tensor for distorted images, Tensor for while loop index)
+#
+#     Examples
+#     --------
+#     >>> X_train, y_train, X_test, y_test = tl.files.load_cifar10_dataset(shape=(-1, 32, 32, 3), plotable=False)
+#     >>> sess = tf.InteractiveSession()
+#     >>> batch_size = 128
+#     >>> x = tf.placeholder(tf.float32, shape=[batch_size, 32, 32, 3])
+#     >>> central_images_op = tl.preprocess.crop_central_whiten_images(images=x, height=24, width=24)
+#     >>> sess.run(tf.initialize_all_variables())
+#     >>> feed_dict={x: X_train[0:batch_size,:,:,:]}
+#     >>> central_images, idx = sess.run(central_images_op, feed_dict=feed_dict)
+#     >>> tl.visualize.images2d(X_train[0:9,:,:,:], second=2, saveable=False, name='cifar10', dtype=np.uint8, fig_idx=20212)
+#     >>> tl.visualize.images2d(central_images[1:10,:,:,:], second=10, saveable=False, name='central_images', dtype=None, fig_idx=23012)
+#
+#     Notes
+#     ------
+#     The first image in 'central_images' should be removed.
+#
+#     Code References
+#     ----------------
+#     - ``tensorflow.models.image.cifar10.cifar10_input``
+#     """
+#     print("This function is deprecated, please use tf.map_fn instead, e.g:\n   \
+#             t_image = tf.map_fn(lambda img: tf.image.random_brightness(img, max_delta=32. / 255.), t_image)\n \
+#             t_image = tf.map_fn(lambda img: tf.image.random_contrast(img, lower=0.5, upper=1.5), t_image)\n \
+#             t_image = tf.map_fn(lambda img: tf.image.random_saturation(img, lower=0.5, upper=1.5), t_image)\n \
+#             t_image = tf.map_fn(lambda img: tf.image.random_hue(img, max_delta=0.032), t_image)")
+#     exit()
+#     # print(" [Warning] crop_central_whiten_images will be deprecated due to speed, see TFRecord tutorial for more info...")
+#     try:
+#         batch_size = int(images._shape[0])
+#     except:
+#         raise Exception('unknow batch_size of images')
+#     central_x = tf.Variable(tf.constant(0.1, shape=[1, height, width, 3]))
+#     i = tf.Variable(tf.constant(0))
+#
+#     c = lambda central_x, i: tf.less(i, batch_size)
+#
+#     def body(central_x, i):
+#         # 1. Crop the central [height, width] of the image.
+#         image = tf.image.resize_image_with_crop_or_pad(tf.gather(images, i), height, width)
+#         # 2. Subtract off the mean and divide by the variance of the pixels.
+#         image = tf.image.per_image_whitening(image)
+#         # 5. Append the image to a batch.
+#         image = tf.expand_dims(image, 0)
+#         return tf.concat(0, [central_x, image]), tf.add(i, 1)
+#
+#     result = tf.while_loop(cond=c, body=body, loop_vars=(central_x, i), parallel_iterations=16)
+#     return result
+#
+#
+#
 
 
 

@@ -1,19 +1,50 @@
 #! /usr/bin/python
-# -*- coding: utf8 -*-
+# -*- coding: utf-8 -*-
 
 
 import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-# import matplotlib.pyplot as plt
+## use this, if you got the following error:
+#  _tkinter.TclError: no display name and no $DISPLAY environment variable
+# matplotlib.use('Agg')
+
 import numpy as np
 import os
+from . import prepro
 
-
-## Save images
+# save/read image(s)
 import scipy.misc
 
-def save_image(image, image_path):
+def read_image(image, path=''):
+    """ Read one image.
+
+    Parameters
+    -----------
+    images : string, file name.
+    path : string, path.
+    """
+    return scipy.misc.imread(os.path.join(path, image))
+
+def read_images(img_list, path='', n_threads=10, printable=True):
+    """ Returns all images in list by given path and name of each image file.
+
+    Parameters
+    -------------
+    img_list : list of string, the image file names.
+    path : string, image folder path.
+    n_threads : int, number of thread to read image.
+    printable : bool, print infomation when reading images, default is True.
+    """
+    imgs = []
+    for idx in range(0, len(img_list), n_threads):
+        b_imgs_list = img_list[idx : idx + n_threads]
+        b_imgs = prepro.threading_data(b_imgs_list, fn=read_image, path=path)
+        # print(b_imgs.shape)
+        imgs.extend(b_imgs)
+        if printable:
+            print('read %d from %s' % (len(imgs), path))
+    return imgs
+
+def save_image(image, image_path=''):
     """Save one image.
 
     Parameters
@@ -21,9 +52,12 @@ def save_image(image, image_path):
     images : numpy array [w, h, c]
     image_path : string.
     """
-    scipy.misc.imsave(image_path, image)
+    try: # RGB
+        scipy.misc.imsave(image_path, image)
+    except: # Greyscale
+        scipy.misc.imsave(image_path, image[:,:,0])
 
-def save_images(images, size, image_path):
+def save_images(images, size, image_path=''):
     """Save mutiple images into one single image.
 
     Parameters
@@ -53,6 +87,78 @@ def save_images(images, size, image_path):
     assert len(images) <= size[0] * size[1], "number of images should be equal or less than size[0] * size[1] {}".format(len(images))
     return imsave(images, size, image_path)
 
+# for object detection
+def draw_boxes_and_labels_to_image(image, classes=[], coords=[],
+                scores=[], classes_list=[],
+                is_center=True, is_rescale=True, save_name=None):
+    """ Draw bboxes and class labels on image. Return or save the image with bboxes, example in the docs of ``tl.prepro``.
+
+    Parameters
+    -----------
+    image : RGB image in numpy.array, [height, width, channel].
+    classes : a list of class ID (int).
+    coords : a list of list for coordinates.
+        - Should be [x, y, x2, y2] (up-left and botton-right format)
+        - If [x_center, y_center, w, h] (set is_center to True).
+    scores : a list of score (float). (Optional)
+    classes_list : list of string, for converting ID to string on image.
+    is_center : boolean, defalt is True.
+        If coords is [x_center, y_center, w, h], set it to True for converting [x_center, y_center, w, h] to [x, y, x2, y2] (up-left and botton-right).
+        If coords is [x1, x2, y1, y2], set it to False.
+    is_rescale : boolean, defalt is True.
+        If True, the input coordinates are the portion of width and high, this API will scale the coordinates to pixel unit internally.
+        If False, feed the coordinates with pixel unit format.
+    save_name : None or string
+        The name of image file (i.e. image.png), if None, not to save image.
+
+    References
+    -----------
+    - OpenCV rectangle and putText.
+    - `scikit-image <http://scikit-image.org/docs/dev/api/skimage.draw.html#skimage.draw.rectangle>`_.
+    """
+    assert len(coords) == len(classes), "number of coordinates and classes are equal"
+    if len(scores) > 0:
+        assert len(scores) == len(classes), "number of scores and classes are equal"
+
+    import cv2
+
+        # image = copy.copy(image)    # don't change the original image
+    image = image.copy()    # don't change the original image, and avoid error https://stackoverflow.com/questions/30249053/python-opencv-drawing-errors-after-manipulating-array-with-numpy
+
+    imh, imw = image.shape[0:2]
+    thick = int((imh + imw) // 430)
+
+    for i in range(len(coords)):
+        if is_center:
+            x, y, x2, y2 = prepro.obj_box_coord_centroid_to_upleft_butright(coords[i])
+        else:
+            x, y, x2, y2 = coords[i]
+
+        if is_rescale: # scale back to pixel unit if the coords are the portion of width and high
+            x, y, x2, y2 = prepro.obj_box_coord_scale_to_pixelunit([x, y, x2, y2], (imh, imw))
+
+        cv2.rectangle(image,
+            (int(x), int(y)), (int(x2), int(y2)),   # up-left and botton-right
+            [0,255,0],
+            thick)
+
+        cv2.putText(
+            image,
+            classes_list[classes[i]] + ((" %.2f" % (scores[i])) if (len(scores) != 0) else " "),
+            (int(x), int(y)),   # button left
+            0,
+            1.5e-3 * imh,       # bigger = larger font
+            [0,0,256],          # self.meta['colors'][max_indx],
+            int(thick/2)+1)     # bold
+
+    if save_name is not None:
+        # cv2.imwrite('_my.png', image)
+        save_image(image, save_name)
+    # if len(coords) == 0:
+    #     print("draw_boxes_and_labels_to_image: no bboxes exist, cannot draw !")
+    return image
+
+# old APIs
 def W(W=None, second=10, saveable=True, shape=[28,28], name='mnist', fig_idx=2396512):
     """Visualize every columns of the weight matrix to a group of Greyscale img.
 
@@ -75,6 +181,7 @@ def W(W=None, second=10, saveable=True, shape=[28,28], name='mnist', fig_idx=239
     --------
     >>> tl.visualize.W(network.all_params[0].eval(), second=10, saveable=True, name='weight_of_1st_layer', fig_idx=2012)
     """
+    import matplotlib.pyplot as plt
     if saveable is False:
         plt.ion()
     fig = plt.figure(fig_idx)      # show all feature images
@@ -138,6 +245,7 @@ def frame(I=None, second=5, saveable=True, name='frame', cmap=None, fig_idx=1283
     >>> observation = env.reset()
     >>> tl.visualize.frame(observation)
     """
+    import matplotlib.pyplot as plt
     if saveable is False:
         plt.ion()
     fig = plt.figure(fig_idx)      # show all feature images
@@ -176,6 +284,7 @@ def CNN2d(CNN=None, second=10, saveable=True, name='cnn', fig_idx=3119362):
     --------
     >>> tl.visualize.CNN2d(network.all_params[0].eval(), second=10, saveable=True, name='cnn1_mnist', fig_idx=2012)
     """
+    import matplotlib.pyplot as plt
     # print(CNN.shape)    # (5, 5, 3, 64)
     # exit()
     n_mask = CNN.shape[3]
@@ -216,7 +325,6 @@ def CNN2d(CNN=None, second=10, saveable=True, name='cnn', fig_idx=3119362):
         plt.draw()
         plt.pause(second)
 
-
 def images2d(images=None, second=10, saveable=True, name='images', dtype=None,
                                                             fig_idx=3119362):
     """Display a group of RGB or Greyscale images.
@@ -241,6 +349,7 @@ def images2d(images=None, second=10, saveable=True, name='images', dtype=None,
     >>> X_train, y_train, X_test, y_test = tl.files.load_cifar10_dataset(shape=(-1, 32, 32, 3), plotable=False)
     >>> tl.visualize.images2d(X_train[0:100,:,:,:], second=10, saveable=False, name='cifar10', dtype=np.uint8, fig_idx=20212)
     """
+    import matplotlib.pyplot as plt
     # print(images.shape)    # (50000, 32, 32, 3)
     # exit()
     if dtype:
@@ -311,6 +420,7 @@ def tsne_embedding(embeddings, reverse_dictionary, plot_only=500,
     >>> tl.visualize.tsne_embedding(final_embeddings, labels, reverse_dictionary,
     ...                   plot_only=500, second=5, saveable=False, name='tsne')
     """
+    import matplotlib.pyplot as plt
     def plot_with_labels(low_dim_embs, labels, figsize=(18, 18), second=5,
                                     saveable=True, name='tsne', fig_idx=9862):
         assert low_dim_embs.shape[0] >= len(labels), "More labels than embeddings"

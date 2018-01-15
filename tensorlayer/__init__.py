@@ -21,12 +21,13 @@ from . import visualize
 from . import prepro
 from . import nlp
 from . import rein
+from . import distributed
 
 # alias
 act = activation
 vis = visualize
 
-__version__ = "1.5.0"
+__version__ = "1.7.3"
 
 global_flag = {}
 global_dict = {}
