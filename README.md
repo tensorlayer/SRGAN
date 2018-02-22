@@ -55,7 +55,7 @@ config.TRAIN.img_path = "your_image_folder/"
 python main.py
 ```
 
-- Start evaluation.
+- Start evaluation. ([pretrained model](https://github.com/tensorlayer/srgan/releases/tag/1.2.0))
 
 ```bash
 python main.py --mode=evaluate 
