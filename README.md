@@ -1,6 +1,6 @@
 ## Super Resolution Examples
 
-We run this script under [TensorFlow](https://www.tensorflow.org) 1.2 and the self-contained [TensorLayer](http://tensorlayer.readthedocs.io/en/latest/). If you got error, you may need to update TensorLayer.
+We run this script under [TensorFlow](https://www.tensorflow.org) 1.3 and the self-contained [TensorLayer](http://tensorlayer.readthedocs.io/en/latest/). If you got error, you may need to update TensorLayer.
 
 <!---
 ⚠️ This repo will be merged into [tensorlayer](https://github.com/zsdonghao/tensorlayer) soon.
