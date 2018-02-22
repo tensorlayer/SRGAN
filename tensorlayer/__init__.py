@@ -1,8 +1,5 @@
-"""
-Deep learning and Reinforcement learning library for Researchers and Engineers
-"""
+"""Deep learning and Reinforcement learning library for Researchers and Engineers"""
 from __future__ import absolute_import
-
 
 try:
     install_instr = "Please make sure you install a recent enough version of TensorFlow."
@@ -15,7 +12,6 @@ from . import cost
 from . import files
 from . import iterate
 from . import layers
-from . import ops
 from . import utils
 from . import visualize
 from . import prepro
@@ -27,7 +23,7 @@ from . import distributed
 act = activation
 vis = visualize
 
-__version__ = "1.7.3"
+__version__ = "1.7.4"
 
 global_flag = {}
 global_dict = {}
