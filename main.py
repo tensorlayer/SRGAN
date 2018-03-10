@@ -9,7 +9,7 @@ import logging, scipy
 
 import tensorflow as tf
 import tensorlayer as tl
-from model import *
+from model import SRGAN_g, SRGAN_d, Vgg19_simple_api
 from utils import *
 from config import config, log_config
 
@@ -65,7 +65,9 @@ def train():
     _, logits_fake = SRGAN_d(net_g.outputs, is_train=True, reuse=True)
 
     net_g.print_params(False)
+    net_g.print_layers()
     net_d.print_params(False)
+    net_d.print_layers()
 
     ## vgg inference. 0, 1, 2, 3 BILINEAR NEAREST BICUBIC AREA
     t_target_image_224 = tf.image.resize_images(
