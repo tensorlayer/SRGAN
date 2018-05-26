@@ -70,6 +70,18 @@ python main.py --mode=evaluate
 ### Author
 - [zsdonghao](https://github.com/zsdonghao)
 
+### Citation
+If you find this project useful, we would be grateful if you cite the TensorLayer paper：
+
+```
+@article{tensorlayer2017,
+author = {Dong, Hao and Supratak, Akara and Mai, Luo and Liu, Fangde and Oehmichen, Axel and Yu, Simiao and Guo, Yike},
+journal = {ACM Multimedia},
+title = {{TensorLayer: A Versatile Library for Efficient Deep Learning Development}},
+url = {http://tensorlayer.org},
+year = {2017}
+}
+```
 ### License
 
 - For academic and non-commercial use only.
