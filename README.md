@@ -4,8 +4,9 @@
 We run this script under [TensorFlow](https://www.tensorflow.org) 1.4 and the [TensorLayer](https://github.com/tensorlayer/tensorlayer) 1.8.0+.
 
 <!---
-⚠️ This repo will be merged into [tensorlayer](https://github.com/zsdonghao/tensorlayer) soon.
+⚠️ This repo will be merged into example folder of [tensorlayer](https://github.com/zsdonghao/tensorlayer) soon.
 -->
+⚠️ ⚠️ This repo will be moved into example folder of [tensorlayer](https://github.com/zsdonghao/tensorlayer) for life-cycle management soon. More CV applications like pose estimation and style transfer can be found [here](https://github.com/tensorlayer/tensorlayer/tree/master/example).
 
 ### SRGAN Architecture
 
