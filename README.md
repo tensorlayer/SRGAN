@@ -6,7 +6,7 @@ We run this script under [TensorFlow](https://www.tensorflow.org) 1.4 and the [T
 <!---
 ⚠️ This repo will be merged into example folder of [tensorlayer](https://github.com/zsdonghao/tensorlayer) soon.
 -->
-⚠️ ⚠️ This repo will be moved into [TensorLayer](https://github.com/zsdonghao/tensorlayer) (please star) for life-cycle management soon. More cool Computer Vision applications such as pose estimation and style transfer can be found in this [organization](https://github.com/tensorlayer).
+🚀 This repo will be moved into [TensorLayer](https://github.com/zsdonghao/tensorlayer) (please star) for life-cycle management soon. More cool Computer Vision applications such as pose estimation and style transfer can be found in this [organization](https://github.com/tensorlayer).
 
 ### SRGAN Architecture
 
@@ -83,6 +83,12 @@ url = {http://tensorlayer.org},
 year = {2017}
 }
 ```
+
+### Other Projects
+
+- [Style Transfer](https://github.com/tensorlayer/adaptive-style-transfer)
+- [Pose Estimation](https://github.com/tensorlayer/openpose)
+
 ### License
 
 - For academic and non-commercial use only.
