@@ -89,6 +89,11 @@ year = {2017}
 - [Style Transfer](https://github.com/tensorlayer/adaptive-style-transfer)
 - [Pose Estimation](https://github.com/tensorlayer/openpose)
 
+### Discussion
+
+- [TensorLayer Slack](https://join.slack.com/t/tensorlayer/shared_invite/enQtMjUyMjczMzU2Njg4LWI0MWU0MDFkOWY2YjQ4YjVhMzI5M2VlZmE4YTNhNGY1NjZhMzUwMmQ2MTc0YWRjMjQzMjdjMTg2MWQ2ZWJhYzc)
+- [TensorLayer WeChat](https://github.com/tensorlayer/tensorlayer-chinese/blob/master/docs/wechat_group.md)
+
 ### License
 
 - For academic and non-commercial use only.
