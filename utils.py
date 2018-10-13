@@ -15,15 +15,15 @@ def get_imgs_fn(file_name, path):
 
 def crop_sub_imgs_fn(x, is_random=True):
     x = crop(x, wrg=384, hrg=384, is_random=is_random)
-    # x = x / (255. / 2.)
-    # x = x - 1.
-    x = x -0.5
+    x = x / (255. / 2.)
+    x = x - 1.
+    # x = (x - 0.5)*2
     return x
 
 def downsample_fn(x):
     # We obtained the LR images by downsampling the HR images using bicubic kernel with downsampling factor r = 4.
     x = imresize(x, size=[96, 96], interp='bicubic', mode=None)
-    # x = x / (255. / 2.)
-    # x = x - 1.
-    x = x -0.5
+    x = x / (255. / 2.)
+    x = x - 1.
+    # x = (x - 0.5)*2
     return x
