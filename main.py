@@ -241,6 +241,8 @@ def train():
 
 
 def resizeImage(path_image,number = 4):
+    if number == None:
+        number = 4
     # Convert to png image
     if path_image.split('.')[-1] != 'png':
         img = Image.open(path_image)
@@ -271,7 +273,7 @@ def resizeImage(path_image,number = 4):
     
     return devolver
 
-def evaluate(path_images = None):
+def evaluate(path_images = None, number = 4):
     ## create folders to save result images
     save_dir = "samples/{}".format(tl.global_flag['mode'])
     tl.files.exists_or_mkdir(save_dir)
@@ -282,13 +284,13 @@ def evaluate(path_images = None):
     # train_lr_img_list = sorted(tl.files.load_file_list(path=config.TRAIN.lr_img_path, regx='.*.png', printable=False))
     valid_hr_img_list = list()
     valid_lr_img_list = list()
-    if path_images == 'None':
+    if path_images == None:
         valid_hr_img_list = sorted(tl.files.load_file_list(path=config.VALID.hr_img_path, regx='.*.png', printable=False))
         valid_lr_img_list = sorted(tl.files.load_file_list(path=config.VALID.lr_img_path, regx='.*.png', printable=False))
         new_config_lr = config.VALID.lr_img_path
         new_config_hr = config.VALID.hr_img_path
     else:
-        paths = resizeImage(path_images)
+        paths = resizeImage(path_images, number)
         valid_hr_img_list.append(paths[0].split('/')[-1])
         valid_lr_img_list.append(paths[1].split('/')[-1])
         new_config_hr = '/'.join(paths[0].split('/')[0:-1])+'/'
@@ -312,7 +314,7 @@ def evaluate(path_images = None):
     valid_hr_img = None
     imid = 64  # 0: 企鹅  81: 蝴蝶 53: 鸟  64: 古堡
     try:
-        if path_images != 'None':
+        if path_images != None:
             imid = 0
         valid_lr_img = valid_lr_imgs[imid]
         valid_hr_img = valid_hr_imgs[imid]
@@ -365,7 +367,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--mode', type=str, default='srgan', help='srgan, evaluate')
-    parser.add_argument('--path', type=str, default='None', help='path load the image')
+    parser.add_argument('--path', type=str, help='path load the image')
+    parser.add_argument('--number', type=int, help='number of time you want to reduce the image')
 
     args = parser.parse_args()
 
@@ -374,6 +377,6 @@ if __name__ == '__main__':
     if tl.global_flag['mode'] == 'srgan':
         train()
     elif tl.global_flag['mode'] == 'evaluate':
-        evaluate(args.path)
+        evaluate(args.path, args.number)
     else:
         raise Exception("Unknow --mode")
