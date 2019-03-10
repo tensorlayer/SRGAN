@@ -1,7 +1,7 @@
 import argparse
 import socket
 import os
-import urllib
+import urllib.request
 import numpy as np
 from PIL import Image
 
@@ -15,7 +15,7 @@ def download_image(download_str, save_dir):
     try:
         if not os.path.isfile(save_img):
             print("Downloading {} to {}.jpg".format(img_url, img_name))
-            urllib.urlretrieve(img_url, save_img)
+            urllib.request.urlretrieve(img_url, save_img)
 
             # Check size of the images
             downloaded = True
