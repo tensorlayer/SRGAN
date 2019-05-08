@@ -1,7 +1,9 @@
 ## Super Resolution Examples
 
 
-We run this script under [TensorFlow](https://www.tensorflow.org) 1.4 and the [TensorLayer](https://github.com/tensorlayer/tensorlayer) 1.8.0+.
+
+
+We run this script under [TensorFlow](https://www.tensorflow.org) 2.0 and the [TensorLayer](https://github.com/tensorlayer/tensorlayer) 2.0+. For TensorLayer 1.4 version, please check [release](https://github.com/tensorlayer/srgan/releases).
 
 <!---
 ⚠️ This repo will be merged into example folder of [tensorlayer](https://github.com/zsdonghao/tensorlayer) soon.
