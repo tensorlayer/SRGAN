@@ -6,11 +6,10 @@ from datetime import datetime
 import numpy as np
 from time import localtime, strftime
 import logging, scipy, multiprocessing
-
 import tensorflow as tf
 import tensorlayer as tl
 from model import get_G, get_D
-from config import config, log_config
+from config import config
 
 ###====================== HYPER-PARAMETERS ===========================###
 ## Adam
@@ -26,7 +25,6 @@ decay_every = config.TRAIN.decay_every
 shuffle_buffer_size = 128
 
 ni = int(np.sqrt(batch_size))
-
 
 def train():
     # create folders to save result images and trained model
