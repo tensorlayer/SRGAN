@@ -83,7 +83,7 @@ def train():
     # G.load_weights(checkpoint_dir + '/g_{}.h5'.format(tl.global_flag['mode'])) # in case you want to restore a training
     # D.load_weights(checkpoint_dir + '/d_{}.h5'.format(tl.global_flag['mode']))
 
-    lr_v = lr_init
+    lr_v = tf.Variable(lr_init)
     g_optimizer_init = tf.optimizers.Adam(lr_v, beta_1=beta1)#.minimize(mse_loss, var_list=g_vars)
     g_optimizer = tf.optimizers.Adam(lr_v, beta_1=beta1)#.minimize(g_loss, var_list=g_vars)
     d_optimier = tf.optimizers.Adam(lr_v, beta_1=beta1)#.minimize(d_loss, var_list=d_vars)
@@ -132,6 +132,14 @@ def train():
         epoch = step//n_step_epoch
         print("Epoch: [{}/{}] step: [{}/{}] time: {}s, g_loss(mse:{}, vgg:{}, adv:{}) d_loss: {}".format(
             epoch, n_epoch_init, step, n_step_epoch, time.time() - step_time, mse_loss, vgg_loss, g_gan_loss, d_loss))
+
+        # update learning rate
+        if epoch != 0 and (epoch % decay_every == 0):
+            new_lr_decay = lr_decay**(epoch // decay_every)
+            lr_v.assign(lr_init * new_lr_decay)
+            log = " ** new learning rate: %f (for GAN)" % (lr_init * new_lr_decay)
+            print(log)
+
         if (epoch != 0) and (epoch % 10 == 0):
             tl.vis.save_images(fake_hr_patchs.numpy(), [ni, ni], save_dir_gan + '/train_g_{}.png'.format(epoch))
             G.save_weights(checkpoint_dir + '/g_{}.h5'.format(tl.global_flag['mode']))
