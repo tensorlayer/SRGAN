@@ -124,10 +124,10 @@ def train():
             mse_loss = tl.cost.mean_squared_error(fake_patchs, hr_patchs, is_mean=True)
             vgg_loss = 2e-6 * tl.cost.mean_squared_error(feature_fake, feature_real, is_mean=True)
             g_loss = mse_loss + vgg_loss + g_gan_loss
-        grad = tape.gradient(g_loss, G.weights)
-        g_optimizer.apply_gradients(zip(grad, G.weights))
+        grad = tape.gradient(g_loss, G.trainable_weights)
+        g_optimizer.apply_gradients(zip(grad, G.trainable_weights))
         grad = tape.gradient(d_loss, D.weights)
-        d_optimizer.apply_gradients(zip(grad, D.weights))
+        d_optimizer.apply_gradients(zip(grad, D.trainable_weights))
         step += 1
         epoch = step//n_step_epoch
         print("Epoch: [{}/{}] step: [{}/{}] time: {}s, g_loss(mse:{}, vgg:{}, adv:{}) d_loss: {}".format(
