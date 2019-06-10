@@ -11,7 +11,7 @@ We run this script under [TensorFlow](https://www.tensorflow.org) 2.0 and the [T
 🚀 **This repo will be moved to [thie folder](https://github.com/tensorlayer/tensorlayer/tree/master/examples) in next month.
 
 <!--More cool Computer Vision applications such as pose estimation and style transfer can be found in this [organization](https://github.com/tensorlayer).**
->>
+-->
 
 ### SRGAN Architecture
 
