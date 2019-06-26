@@ -1,7 +1,7 @@
 #! /usr/bin/python
 # -*- coding: utf8 -*-
 
-import os, time, pickle, random
+import time, random
 from datetime import datetime
 import numpy as np
 import scipy, multiprocessing
