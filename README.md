@@ -8,7 +8,7 @@ We run this script under [TensorFlow](https://www.tensorflow.org) 2.0 and the [T
 <!---
 ⚠️ This repo will be merged into example folder of [tensorlayer](https://github.com/zsdonghao/tensorlayer) soon.
 -->
-🚀🚀🚀🚀🚀🚀 **This repo will be MOVED to [thie folder](https://github.com/tensorlayer/tensorlayer/tree/master/examples) in next month.**
+🚀🚀🚀🚀🚀🚀 **This repo will be MOVED to [this folder](https://github.com/tensorlayer/tensorlayer/tree/master/examples) in next month.**
 
 <!--More cool Computer Vision applications such as pose estimation and style transfer can be found in this [organization](https://github.com/tensorlayer).**
 -->
