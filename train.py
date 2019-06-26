@@ -1,7 +1,7 @@
 #! /usr/bin/python
 # -*- coding: utf8 -*-
 
-import os, time, pickle, random, time
+import os, time, pickle, random
 from datetime import datetime
 import numpy as np
 from time import localtime, strftime
