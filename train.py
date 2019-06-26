@@ -4,7 +4,6 @@
 import os, time, pickle, random
 from datetime import datetime
 import numpy as np
-from time import localtime, strftime
 import logging, scipy, multiprocessing
 import tensorflow as tf
 import tensorlayer as tl
