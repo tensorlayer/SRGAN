@@ -109,7 +109,7 @@ def train():
     # adversarial learning (G, D)
     n_step_epoch = round(n_epoch // batch_size)
     for step, (lr_patchs, hr_patchs) in train_ds:
-        with tf.GradientTape() as tape:
+        with tf.GradientTape(persistent=True) as tape:
             fake_patchs = G(lr_patchs)
             logits_fake = D(fake_patchs)
             logits_real = D(hr_patchs)
