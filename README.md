@@ -63,13 +63,15 @@ config.TRAIN.img_path = "your_image_folder/"
 - Start training.
 
 ```bash
-python main.py
+python train.py
 ```
 
-- Start evaluation. ([pretrained model](https://github.com/tensorlayer/srgan/releases/tag/1.2.0) for DIV2K)
+- Start evaluation. 
+
+<!--([pretrained model](https://github.com/tensorlayer/srgan/releases/tag/1.2.0) for DIV2K)-->
 
 ```bash
-python main.py --mode=evaluate 
+python train.py --mode=evaluate 
 ```
 
 
