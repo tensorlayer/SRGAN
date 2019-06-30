@@ -328,6 +328,8 @@ def evaluate():
     G = get_G([1, None, None, 3])
     G.load_weights(checkpoint_dir + '/g_{}.h5'.format(tl.global_flag['mode']))
     G.eval()
+    
+    valid_lr_img = np.asarray(valid_lr_img, dtype=np.float32)
 
     out = G(valid_lr_img).numpy()
 
