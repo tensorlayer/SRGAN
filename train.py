@@ -65,7 +65,7 @@ def train():
     train_ds = train_ds.map(_map_fn_train, num_parallel_calls=multiprocessing.cpu_count())
     train_ds = train_ds.repeat(n_epoch_init + n_epoch)
     train_ds = train_ds.shuffle(shuffle_buffer_size)
-    train_ds = train_ds.prefetch(buffer_size=4096)
+    train_ds = train_ds.prefetch(buffer_size=2)
     train_ds = train_ds.batch(batch_size)
     # value = train_ds.make_one_shot_iterator().get_next()
 
