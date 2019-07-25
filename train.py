@@ -97,8 +97,8 @@ def train():
         with tf.GradientTape() as tape:
             fake_hr_patchs = G(lr_patchs)
             mse_loss = tl.cost.mean_squared_error(fake_hr_patchs, hr_patchs, is_mean=True)
-        grad = tape.gradient(mse_loss, G.weights)
-        g_optimizer_init.apply_gradients(zip(grad, G.weights))
+        grad = tape.gradient(mse_loss, G.trainable_weights)
+        g_optimizer_init.apply_gradients(zip(grad, G.trainable_weights))
         step += 1
         epoch = step//n_step_epoch
         print("Epoch: [{}/{}] step: [{}/{}] time: {}s, mse: {} ".format(
@@ -124,7 +124,7 @@ def train():
             g_loss = mse_loss + vgg_loss + g_gan_loss
         grad = tape.gradient(g_loss, G.trainable_weights)
         g_optimizer.apply_gradients(zip(grad, G.trainable_weights))
-        grad = tape.gradient(d_loss, D.weights)
+        grad = tape.gradient(d_loss, D.trainable_weights)
         d_optimizer.apply_gradients(zip(grad, D.trainable_weights))
         step += 1
         epoch = step//n_step_epoch
