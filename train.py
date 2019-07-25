@@ -124,7 +124,7 @@ def train():
             g_loss = mse_loss + vgg_loss + g_gan_loss
         grad = tape.gradient(g_loss, G.trainable_weights)
         g_optimizer.apply_gradients(zip(grad, G.trainable_weights))
-        grad = tape.gradient(d_loss, D.weights)
+        grad = tape.gradient(d_loss, D.trainable_weights)
         d_optimizer.apply_gradients(zip(grad, D.trainable_weights))
         step += 1
         epoch = step//n_step_epoch
