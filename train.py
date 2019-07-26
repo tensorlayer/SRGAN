@@ -1,7 +1,8 @@
 #! /usr/bin/python
 # -*- coding: utf8 -*-
 
-import time, random
+import time
+import random
 import numpy as np
 import scipy, multiprocessing
 import tensorflow as tf
