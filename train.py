@@ -1,7 +1,8 @@
 #! /usr/bin/python
 # -*- coding: utf8 -*-
 
-import time, random
+import time
+import random
 import numpy as np
 import scipy, multiprocessing
 import tensorflow as tf
@@ -65,7 +66,7 @@ def train():
     train_ds = train_ds.map(_map_fn_train, num_parallel_calls=multiprocessing.cpu_count())
     train_ds = train_ds.repeat(n_epoch_init + n_epoch)
     train_ds = train_ds.shuffle(shuffle_buffer_size)
-    train_ds = train_ds.prefetch(buffer_size=4096)
+    train_ds = train_ds.prefetch(buffer_size=2)
     train_ds = train_ds.batch(batch_size)
     # value = train_ds.make_one_shot_iterator().get_next()
 
@@ -97,8 +98,8 @@ def train():
         with tf.GradientTape() as tape:
             fake_hr_patchs = G(lr_patchs)
             mse_loss = tl.cost.mean_squared_error(fake_hr_patchs, hr_patchs, is_mean=True)
-        grad = tape.gradient(mse_loss, G.weights)
-        g_optimizer_init.apply_gradients(zip(grad, G.weights))
+        grad = tape.gradient(mse_loss, G.trainable_weights)
+        g_optimizer_init.apply_gradients(zip(grad, G.trainable_weights))
         step += 1
         epoch = step//n_step_epoch
         print("Epoch: [{}/{}] step: [{}/{}] time: {}s, mse: {} ".format(
@@ -108,7 +109,7 @@ def train():
 
     # adversarial learning (G, D)
     n_step_epoch = round(n_epoch // batch_size)
-    for step, (lr_patchs, hr_patchs) in train_ds:
+    for step, (lr_patchs, hr_patchs) in enumerate(train_ds):
         with tf.GradientTape(persistent=True) as tape:
             fake_patchs = G(lr_patchs)
             logits_fake = D(fake_patchs)
@@ -124,7 +125,7 @@ def train():
             g_loss = mse_loss + vgg_loss + g_gan_loss
         grad = tape.gradient(g_loss, G.trainable_weights)
         g_optimizer.apply_gradients(zip(grad, G.trainable_weights))
-        grad = tape.gradient(d_loss, D.weights)
+        grad = tape.gradient(d_loss, D.trainable_weights)
         d_optimizer.apply_gradients(zip(grad, D.trainable_weights))
         step += 1
         epoch = step//n_step_epoch
@@ -329,6 +330,8 @@ def evaluate():
     # G.load_weights(checkpoint_dir + '/g_{}.h5'.format(tl.global_flag['mode']))
     G.load_weights("g_srgan.npz")
     G.eval()
+    
+    valid_lr_img = np.asarray(valid_lr_img, dtype=np.float32)
 
     out = G(valid_lr_img).numpy()
 
