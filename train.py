@@ -326,7 +326,8 @@ def evaluate():
     # print(valid_lr_img.min(), valid_lr_img.max())
 
     G = get_G([1, None, None, 3])
-    G.load_weights(checkpoint_dir + '/g_{}.h5'.format(tl.global_flag['mode']))
+    # G.load_weights(checkpoint_dir + '/g_{}.h5'.format(tl.global_flag['mode']))
+    G.load_weights("g_srgan.npz")
     G.eval()
 
     out = G(valid_lr_img).numpy()
