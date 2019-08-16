@@ -3,7 +3,7 @@
 
 import tensorflow as tf
 import tensorlayer as tl
-from tensorlayer.layers import (Input, Conv2d, BatchNorm, Elementwise, SubpixelConv2d, Flatten, Dense)
+from tensorlayer.layers import (Input, Conv2d, BatchNorm2d, Elementwise, SubpixelConv2d, Flatten, Dense)
 from tensorlayer.models import Model
 
 def get_G(input_shape):
@@ -17,9 +17,9 @@ def get_G(input_shape):
     # B residual blocks
     for i in range(16):
         nn = Conv2d(64, (3, 3), (1, 1), padding='SAME', W_init=w_init, b_init=None)(n)
-        nn = BatchNorm(act=tf.nn.relu, gamma_init=g_init)(nn)
+        nn = BatchNorm2d(act=tf.nn.relu, gamma_init=g_init)(nn)
         nn = Conv2d(64, (3, 3), (1, 1), padding='SAME', W_init=w_init, b_init=None)(nn)
-        nn = BatchNorm(gamma_init=g_init)(nn)
+        nn = BatchNorm2d(gamma_init=g_init)(nn)
         nn = Elementwise(tf.add)([n, nn])
         n = nn
 
@@ -48,26 +48,26 @@ def get_D(input_shape):
     n = Conv2d(df_dim, (4, 4), (2, 2), act=lrelu, padding='SAME', W_init=w_init)(nin)
 
     n = Conv2d(df_dim * 2, (4, 4), (2, 2), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm(act=lrelu, gamma_init=gamma_init)(n)
+    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
     n = Conv2d(df_dim * 4, (4, 4), (2, 2), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm(act=lrelu, gamma_init=gamma_init)(n)
+    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
     n = Conv2d(df_dim * 8, (4, 4), (2, 2), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm(act=lrelu, gamma_init=gamma_init)(n)
+    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
     n = Conv2d(df_dim * 16, (4, 4), (2, 2), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm(act=lrelu, gamma_init=gamma_init)(n)
+    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
     n = Conv2d(df_dim * 32, (4, 4), (2, 2), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm(act=lrelu, gamma_init=gamma_init)(n)
+    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
     n = Conv2d(df_dim * 16, (1, 1), (1, 1), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm(act=lrelu, gamma_init=gamma_init)(n)
+    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
     n = Conv2d(df_dim * 8, (1, 1), (1, 1), padding='SAME', W_init=w_init, b_init=None)(n)
-    nn = BatchNorm(gamma_init=gamma_init)(n)
+    nn = BatchNorm2d(gamma_init=gamma_init)(n)
 
     n = Conv2d(df_dim * 2, (1, 1), (1, 1), padding='SAME', W_init=w_init, b_init=None)(nn)
-    n = BatchNorm(act=lrelu, gamma_init=gamma_init)(n)
+    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
     n = Conv2d(df_dim * 2, (3, 3), (1, 1), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm(act=lrelu, gamma_init=gamma_init)(n)
+    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
     n = Conv2d(df_dim * 8, (3, 3), (1, 1), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm(gamma_init=gamma_init)(n)
+    n = BatchNorm2d(gamma_init=gamma_init)(n)
     n = Elementwise(combine_fn=tf.add, act=lrelu)([n, nn])
 
     n = Flatten()(n)
