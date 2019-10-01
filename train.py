@@ -10,6 +10,7 @@ import tensorlayer as tl
 from model import get_G, get_D
 from config import config
 from PIL import Image
+
 ###====================== HYPER-PARAMETERS ===========================###
 ## Adam
 batch_size = config.TRAIN.batch_size  # use 8 if your GPU memory is small, and change [4, 4] in tl.vis.save_images to [2, 4]
