@@ -5,12 +5,11 @@ import os
 import time
 import random
 import numpy as np
-import scipy, multiprocessing
 import tensorflow as tf
 import tensorlayer as tl
 from model import get_G, get_D
 from config import config
-
+from PIL import Image
 ###====================== HYPER-PARAMETERS ===========================###
 ## Adam
 batch_size = config.TRAIN.batch_size  # use 8 if your GPU memory is small, and change [4, 4] in tl.vis.save_images to [2, 4]
@@ -184,7 +183,7 @@ def evaluate():
     tl.vis.save_image(valid_lr_img[0], os.path.join(save_dir, 'valid_lr.png'))
     tl.vis.save_image(valid_hr_img, os.path.join(save_dir, 'valid_hr.png'))
 
-    out_bicu = scipy.misc.imresize(valid_lr_img[0], [size[0] * 4, size[1] * 4], interp='bicubic', mode=None)
+    out_bicu = np.array(Image.fromarray(valid_lr_img[0]).resize((size[0] * 4, size[1] * 4), resample=Image.BICUBIC))
     tl.vis.save_image(out_bicu, os.path.join(save_dir, 'valid_bicubic.png'))
 
 
