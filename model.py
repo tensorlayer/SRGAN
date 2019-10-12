@@ -24,7 +24,7 @@ def get_G(input_shape):
         n = nn
 
     n = Conv2d(64, (3, 3), (1, 1), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm(gamma_init=g_init)(n)
+    n = BatchNorm2d(gamma_init=g_init)(n)
     n = Elementwise(tf.add)([n, temp])
     # B residual blacks end
 
