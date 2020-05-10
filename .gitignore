@@ -6,3 +6,5 @@ sample/
 samples/
 checkpoint/
 __pycache__/
+models/
+venv/
