@@ -1,79 +1,97 @@
-#! /usr/bin/python
-# -*- coding: utf8 -*-
 
 import tensorflow as tf
-import tensorlayer as tl
-from tensorlayer.layers import (Input, Conv2d, BatchNorm2d, Elementwise, SubpixelConv2d, Flatten, Dense)
-from tensorlayer.models import Model
+from tensorflow.keras.layers import Input, Conv2D, Flatten, Dense, add, BatchNormalization, Activation, LeakyReLU
+
+from subpixel_conv2d import SubpixelConv2D
+from tensorflow.keras.models import Model
 
 def get_G(input_shape):
-    w_init = tf.random_normal_initializer(stddev=0.02)
-    g_init = tf.random_normal_initializer(1., 0.02)
+	# w_init = tf.random_normal_initializer(stddev=0.02)
+	g_init = tf.random_normal_initializer(1., 0.02)
+	relu= Activation('relu')
 
-    nin = Input(input_shape)
-    n = Conv2d(64, (3, 3), (1, 1), act=tf.nn.relu, padding='SAME', W_init=w_init)(nin)
-    temp = n
+	nin= Input(shape= input_shape)
+	n= Conv2D(64, (3,3), padding='SAME', activation= 'relu', kernel_initializer='HeNormal')(nin)
+	temp= n
 
-    # B residual blocks
-    for i in range(16):
-        nn = Conv2d(64, (3, 3), (1, 1), padding='SAME', W_init=w_init, b_init=None)(n)
-        nn = BatchNorm2d(act=tf.nn.relu, gamma_init=g_init)(nn)
-        nn = Conv2d(64, (3, 3), (1, 1), padding='SAME', W_init=w_init, b_init=None)(nn)
-        nn = BatchNorm2d(gamma_init=g_init)(nn)
-        nn = Elementwise(tf.add)([n, nn])
-        n = nn
 
-    n = Conv2d(64, (3, 3), (1, 1), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm2d(gamma_init=g_init)(n)
-    n = Elementwise(tf.add)([n, temp])
-    # B residual blacks end
+	# B residual blocks
+	for i in range(16):
+		nn= Conv2D(64, (3,3), padding='SAME', kernel_initializer='HeNormal')(n)
+		nn= BatchNormalization(gamma_initializer= g_init)(nn)
+		nn= relu(nn)
+		nn= Conv2D(64, (3,3), padding='SAME', kernel_initializer='HeNormal')(n)
+		nn= BatchNormalization(gamma_initializer= g_init)(nn)
+		nn= add([n, nn])
+		n= nn
 
-    n = Conv2d(256, (3, 3), (1, 1), padding='SAME', W_init=w_init)(n)
-    n = SubpixelConv2d(scale=2, n_out_channels=None, act=tf.nn.relu)(n)
+	n= Conv2D(64, (3,3), padding='SAME', kernel_initializer='HeNormal')(n)
+	n= BatchNormalization(gamma_initializer= g_init)(n)
+	n= add([n, temp])
+	# B residual blacks end
 
-    n = Conv2d(256, (3, 3), (1, 1), act=None, padding='SAME', W_init=w_init)(n)
-    n = SubpixelConv2d(scale=2, n_out_channels=None, act=tf.nn.relu)(n)
+	n= Conv2D(256, (3,3), padding='SAME', kernel_initializer='HeNormal')(n)
+	n= SubpixelConv2D(upsampling_factor=2)(n)
+	n= relu(n)
 
-    nn = Conv2d(3, (1, 1), (1, 1), act=tf.nn.tanh, padding='SAME', W_init=w_init)(n)
-    G = Model(inputs=nin, outputs=nn, name="generator")
-    return G
+	n= Conv2D(256, (3,3), padding='SAME', kernel_initializer='HeNormal')(n)
+	n= SubpixelConv2D(upsampling_factor=2)(n)
+	n= relu(n)
+
+	nn= Conv2D(3, (1,1), padding='SAME', kernel_initializer='HeNormal', activation= 'tanh')(n)
+
+
+	G = Model(inputs=nin, outputs=nn, name="generator")
+	return G
+
+
 
 def get_D(input_shape):
-    w_init = tf.random_normal_initializer(stddev=0.02)
-    gamma_init = tf.random_normal_initializer(1., 0.02)
-    df_dim = 64
-    lrelu = lambda x: tl.act.lrelu(x, 0.2)
 
-    nin = Input(input_shape)
-    n = Conv2d(df_dim, (4, 4), (2, 2), act=lrelu, padding='SAME', W_init=w_init)(nin)
+	g_init= tf.random_normal_initializer(1., 0.02)
+	ly_relu= LeakyReLU(alpha= 0.2)
+	df_dim = 64
 
-    n = Conv2d(df_dim * 2, (4, 4), (2, 2), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
-    n = Conv2d(df_dim * 4, (4, 4), (2, 2), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
-    n = Conv2d(df_dim * 8, (4, 4), (2, 2), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
-    n = Conv2d(df_dim * 16, (4, 4), (2, 2), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
-    n = Conv2d(df_dim * 32, (4, 4), (2, 2), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
-    n = Conv2d(df_dim * 16, (1, 1), (1, 1), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
-    n = Conv2d(df_dim * 8, (1, 1), (1, 1), padding='SAME', W_init=w_init, b_init=None)(n)
-    nn = BatchNorm2d(gamma_init=gamma_init)(n)
+	nin = Input(input_shape)
+	n = Conv2D(df_dim, (4, 4), (2, 2), padding='SAME', kernel_initializer='HeNormal')(nin)
+	n= ly_relu(n)
 
-    n = Conv2d(df_dim * 2, (1, 1), (1, 1), padding='SAME', W_init=w_init, b_init=None)(nn)
-    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
-    n = Conv2d(df_dim * 2, (3, 3), (1, 1), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm2d(act=lrelu, gamma_init=gamma_init)(n)
-    n = Conv2d(df_dim * 8, (3, 3), (1, 1), padding='SAME', W_init=w_init, b_init=None)(n)
-    n = BatchNorm2d(gamma_init=gamma_init)(n)
-    n = Elementwise(combine_fn=tf.add, act=lrelu)([n, nn])
+	for i in range(1, 6):
+		n = Conv2D(df_dim*(2**i),(4, 4), (2, 2), padding='SAME', kernel_initializer='HeNormal')(n)
+		n= ly_relu(n)
+		n= BatchNormalization(gamma_initializer= g_init)(n)
 
-    n = Flatten()(n)
-    no = Dense(n_units=1, W_init=w_init)(n)
-    D = Model(inputs=nin, outputs=no, name="discriminator")
-    return D
+	n = Conv2D(df_dim*16, (1, 1), (1, 1), padding='SAME', kernel_initializer='HeNormal')(n)
+	n= ly_relu(n)
+	n= BatchNormalization(gamma_initializer= g_init)(n)
+
+	n = Conv2D(df_dim*8, (1, 1), (1, 1), padding='SAME', kernel_initializer='HeNormal')(n)
+	n= BatchNormalization(gamma_initializer= g_init)(n)
+	temp= n
+
+	n = Conv2D(df_dim*2, (1, 1), (1, 1), padding='SAME', kernel_initializer='HeNormal')(n)
+	n= ly_relu(n)
+	n= BatchNormalization(gamma_initializer= g_init)(n)
+
+	n = Conv2D(df_dim*2, (3, 3), (1, 1), padding='SAME', kernel_initializer='HeNormal')(n)
+	n= ly_relu(n)
+	n= BatchNormalization(gamma_initializer= g_init)(n)
+
+	n = Conv2D(df_dim*8, (3, 3), (1, 1), padding='SAME', kernel_initializer='HeNormal')(n)
+	n= BatchNormalization(gamma_initializer= g_init)(n)
+
+	n= add([n, temp])
+
+	n = Flatten()(n)
+	no = Dense(units=1, kernel_initializer='HeNormal', activation= 'sigmoid')(n)
+	D = Model(inputs=nin, outputs=no, name="discriminator")
+
+	return D
+
+
+
+
+
 
 # def get_G2(input_shape):
 #     w_init = tf.random_normal_initializer(stddev=0.02)
@@ -369,3 +387,9 @@ def get_D(input_shape):
 #         # new_network = DenseLayer(new_network, z_dim, #num_lstm_units,
 #         #             b_init=None, name='vgg_out/out')
 #         return conv4, network
+
+
+
+
+
+
