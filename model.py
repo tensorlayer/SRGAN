@@ -23,7 +23,6 @@ def get_G(input_shape):
 		nn= relu(nn)
 		nn= Conv2D(64, (3,3), padding='SAME', kernel_initializer='HeNormal')(n)
 		nn= BatchNormalization(gamma_initializer= g_init)(nn)
-
 		nn= add([n, nn])
 		n= nn
 
