@@ -93,7 +93,7 @@ def get_D(input_shape):
 	n= add([n, temp])
 
 	n = Flatten()(n)
-    no = Dense(n_units=1, kernel_initializer='HeNormal')(n)
+    no = Dense(n_units=1, kernel_initializer='HeNormal', activation= 'sigmoid')(n)
     D = Model(inputs=nin, outputs=no, name="discriminator")
 
     return D
