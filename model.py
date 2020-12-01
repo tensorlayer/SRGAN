@@ -11,8 +11,7 @@ def get_G(input_shape):
 	relu= Activation('relu')
 
 	nin= Input(shape= input_shape)
-	n= Conv2D(64, (3,3), padding='SAME', activation= 'relu',
-						kernel_initializer='HeNormal')(nin)
+	n= Conv2D(64, (3,3), padding='SAME', activation= 'relu', kernel_initializer='HeNormal')(nin)
 	temp= n
 
 
