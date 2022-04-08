@@ -1,206 +1,210 @@
-#! /usr/bin/python
-# -*- coding: utf8 -*-
-
 import os
+os.environ['TL_BACKEND'] = 'tensorflow' # Just modify this line, easily change to any framework! PyTorch will coming soon!
+# os.environ['TL_BACKEND'] = 'mindspore'
+# os.environ['TL_BACKEND'] = 'paddle'
 import time
-import random
 import numpy as np
-import scipy, multiprocessing
-import tensorflow as tf
-import tensorlayer as tl
-from model import get_G, get_D
+import tensorlayerx as tlx
+from tensorlayerx.dataflow import Dataset, DataLoader
+from srgan import SRGAN_g, SRGAN_d
 from config import config
+from tensorlayerx.vision.transforms import Compose, RandomCrop, Normalize, RandomFlipHorizontal, Resize
+import vgg
+from tensorlayerx.model import TrainOneStep
+from tensorlayerx.nn import Module
+import cv2
 
 ###====================== HYPER-PARAMETERS ===========================###
-## Adam
-batch_size = config.TRAIN.batch_size  # use 8 if your GPU memory is small, and change [4, 4] in tl.vis.save_images to [2, 4]
-lr_init = config.TRAIN.lr_init
-beta1 = config.TRAIN.beta1
-## initialize G
+batch_size = 8
 n_epoch_init = config.TRAIN.n_epoch_init
-## adversarial learning (SRGAN)
 n_epoch = config.TRAIN.n_epoch
-lr_decay = config.TRAIN.lr_decay
-decay_every = config.TRAIN.decay_every
-shuffle_buffer_size = 128
-
-# ni = int(np.sqrt(batch_size))
-
 # create folders to save result images and trained models
 save_dir = "samples"
-tl.files.exists_or_mkdir(save_dir)
+tlx.files.exists_or_mkdir(save_dir)
 checkpoint_dir = "models"
-tl.files.exists_or_mkdir(checkpoint_dir)
+tlx.files.exists_or_mkdir(checkpoint_dir)
 
-def get_train_data():
-    # load dataset
-    train_hr_img_list = sorted(tl.files.load_file_list(path=config.TRAIN.hr_img_path, regx='.*.png', printable=False))#[0:20]
-        # train_lr_img_list = sorted(tl.files.load_file_list(path=config.TRAIN.lr_img_path, regx='.*.png', printable=False))
-        # valid_hr_img_list = sorted(tl.files.load_file_list(path=config.VALID.hr_img_path, regx='.*.png', printable=False))
-        # valid_lr_img_list = sorted(tl.files.load_file_list(path=config.VALID.lr_img_path, regx='.*.png', printable=False))
+hr_transform = Compose([
+    RandomCrop(size=(384, 384)),
+    RandomFlipHorizontal(),
+])
+nor = Normalize(mean=(127.5), std=(127.5), data_format='HWC')
+lr_transform = Resize(size=(96, 96))
 
-    ## If your machine have enough memory, please pre-load the entire train set.
-    train_hr_imgs = tl.vis.read_images(train_hr_img_list, path=config.TRAIN.hr_img_path, n_threads=32)
-        # for im in train_hr_imgs:
-        #     print(im.shape)
-        # valid_lr_imgs = tl.vis.read_images(valid_lr_img_list, path=config.VALID.lr_img_path, n_threads=32)
-        # for im in valid_lr_imgs:
-        #     print(im.shape)
-        # valid_hr_imgs = tl.vis.read_images(valid_hr_img_list, path=config.VALID.hr_img_path, n_threads=32)
-        # for im in valid_hr_imgs:
-        #     print(im.shape)
-        
-    # dataset API and augmentation
-    def generator_train():
-        for img in train_hr_imgs:
-            yield img
-    def _map_fn_train(img):
-        hr_patch = tf.image.random_crop(img, [384, 384, 3])
-        hr_patch = hr_patch / (255. / 2.)
-        hr_patch = hr_patch - 1.
-        hr_patch = tf.image.random_flip_left_right(hr_patch)
-        lr_patch = tf.image.resize(hr_patch, size=[96, 96])
-        return lr_patch, hr_patch
-    train_ds = tf.data.Dataset.from_generator(generator_train, output_types=(tf.float32))
-    train_ds = train_ds.map(_map_fn_train, num_parallel_calls=multiprocessing.cpu_count())
-        # train_ds = train_ds.repeat(n_epoch_init + n_epoch)
-    train_ds = train_ds.shuffle(shuffle_buffer_size)
-    train_ds = train_ds.prefetch(buffer_size=2)
-    train_ds = train_ds.batch(batch_size)
-        # value = train_ds.make_one_shot_iterator().get_next()
-    return train_ds
+
+class TrainData(Dataset):
+
+    def __init__(self, hr_trans=hr_transform, lr_trans=lr_transform):
+        self.train_hr_imgs = tlx.vision.load_images(path=config.TRAIN.hr_img_path)
+        self.hr_trans = hr_trans
+        self.lr_trans = lr_trans
+
+    def __getitem__(self, index):
+        img = self.train_hr_imgs[index]
+        hr_patch = self.hr_trans(img)
+        lr_patch = self.lr_trans(hr_patch)
+        return nor(lr_patch), nor(hr_patch)
+
+    def __len__(self):
+        return len(self.train_hr_imgs)
+
+
+class WithLoss_init(Module):
+    def __init__(self, G_net, loss_fn):
+        super(WithLoss_init, self).__init__()
+        self.net = G_net
+        self.loss_fn = loss_fn
+
+    def forward(self, lr, hr):
+        out = self.net(lr)
+        loss = self.loss_fn(out, hr)
+        return loss
+
+
+class WithLoss_D(Module):
+    def __init__(self, D_net, G_net, loss_fn):
+        super(WithLoss_D, self).__init__()
+        self.D_net = D_net
+        self.G_net = G_net
+        self.loss_fn = loss_fn
+
+    def forward(self, lr, hr):
+        fake_patchs = self.G_net(lr)
+        logits_fake = self.D_net(fake_patchs)
+        logits_real = self.D_net(hr)
+        d_loss1 = self.loss_fn(logits_real, tlx.ones_like(logits_real))
+        d_loss1 = tlx.ops.reduce_mean(d_loss1)
+        d_loss2 = self.loss_fn(logits_fake, tlx.zeros_like(logits_fake))
+        d_loss2 = tlx.ops.reduce_mean(d_loss2)
+        d_loss = d_loss1 + d_loss2
+        return d_loss
+
+
+class WithLoss_G(Module):
+    def __init__(self, D_net, G_net, vgg, loss_fn1, loss_fn2):
+        super(WithLoss_G, self).__init__()
+        self.D_net = D_net
+        self.G_net = G_net
+        self.vgg = vgg
+        self.loss_fn1 = loss_fn1
+        self.loss_fn2 = loss_fn2
+
+    def forward(self, lr, hr):
+        fake_patchs = self.G_net(lr)
+        logits_fake = self.D_net(fake_patchs)
+        feature_fake = self.vgg((fake_patchs + 1) / 2.)
+        feature_real = self.vgg((hr + 1) / 2.)
+        g_gan_loss = 1e-3 * self.loss_fn1(logits_fake, tlx.ones_like(logits_fake))
+        g_gan_loss = tlx.ops.reduce_mean(g_gan_loss)
+        mse_loss = self.loss_fn2(fake_patchs, hr)
+        vgg_loss = 2e-6 * self.loss_fn2(feature_fake, feature_real)
+        g_loss = mse_loss + vgg_loss + g_gan_loss
+        return g_loss
+
+
+G = SRGAN_g()
+D = SRGAN_d()
+VGG = vgg.VGG19(pretrained=False, end_with='pool4', mode='dynamic')
+# automatic init layers weights shape with input tensor.
+# Calculating and filling 'in_channels' of each layer is a very troublesome thing.
+# So, just use 'init_build' with input shape. 'in_channels' of each layer will be automaticlly set.
+G.init_build(tlx.nn.Input(shape=(8, 96, 96, 3)))
+D.init_build(tlx.nn.Input(shape=(8, 384, 384, 3)))
+
 
 def train():
-    G = get_G((batch_size, 96, 96, 3))
-    D = get_D((batch_size, 384, 384, 3))
-    VGG = tl.models.vgg19(pretrained=True, end_with='pool4', mode='static')
+    G.set_train()
+    D.set_train()
+    VGG.set_eval()
+    train_ds = TrainData()
+    train_ds_img_nums = len(train_ds)
+    train_ds = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True)
 
-    lr_v = tf.Variable(lr_init)
-    g_optimizer_init = tf.optimizers.Adam(lr_v, beta_1=beta1)
-    g_optimizer = tf.optimizers.Adam(lr_v, beta_1=beta1)
-    d_optimizer = tf.optimizers.Adam(lr_v, beta_1=beta1)
+    lr_v = tlx.optimizers.lr.StepDecay(learning_rate=0.05, step_size=1000, gamma=0.1, last_epoch=-1, verbose=True)
+    g_optimizer_init = tlx.optimizers.Momentum(lr_v, 0.9)
+    g_optimizer = tlx.optimizers.Momentum(lr_v, 0.9)
+    d_optimizer = tlx.optimizers.Momentum(lr_v, 0.9)
+    g_weights = G.trainable_weights
+    d_weights = D.trainable_weights
+    net_with_loss_init = WithLoss_init(G, loss_fn=tlx.losses.mean_squared_error)
+    net_with_loss_D = WithLoss_D(D_net=D, G_net=G, loss_fn=tlx.losses.sigmoid_cross_entropy)
+    net_with_loss_G = WithLoss_G(D_net=D, G_net=G, vgg=VGG, loss_fn1=tlx.losses.sigmoid_cross_entropy,
+                                 loss_fn2=tlx.losses.mean_squared_error)
 
-    G.train()
-    D.train()
-    VGG.train()
+    trainforinit = TrainOneStep(net_with_loss_init, optimizer=g_optimizer_init, train_weights=g_weights)
+    trainforG = TrainOneStep(net_with_loss_G, optimizer=g_optimizer, train_weights=g_weights)
+    trainforD = TrainOneStep(net_with_loss_D, optimizer=d_optimizer, train_weights=d_weights)
 
-    train_ds = get_train_data()
-
-    ## initialize learning (G)
-    n_step_epoch = round(n_epoch_init // batch_size)
+    # initialize learning (G)
+    n_step_epoch = round(train_ds_img_nums // batch_size)
     for epoch in range(n_epoch_init):
-        for step, (lr_patchs, hr_patchs) in enumerate(train_ds):
-            if lr_patchs.shape[0] != batch_size: # if the remaining data in this epoch < batch_size
-                break
+        for step, (lr_patch, hr_patch) in enumerate(train_ds):
             step_time = time.time()
-            with tf.GradientTape() as tape:
-                fake_hr_patchs = G(lr_patchs)
-                mse_loss = tl.cost.mean_squared_error(fake_hr_patchs, hr_patchs, is_mean=True)
-            grad = tape.gradient(mse_loss, G.trainable_weights)
-            g_optimizer_init.apply_gradients(zip(grad, G.trainable_weights))
+            loss = trainforinit(lr_patch, hr_patch)
             print("Epoch: [{}/{}] step: [{}/{}] time: {:.3f}s, mse: {:.3f} ".format(
-                epoch, n_epoch_init, step, n_step_epoch, time.time() - step_time, mse_loss))
-        if (epoch != 0) and (epoch % 10 == 0):
-            tl.vis.save_images(fake_hr_patchs.numpy(), [2, 4], os.path.join(save_dir, 'train_g_init_{}.png'.format(epoch)))
+                epoch, n_epoch_init, step, n_step_epoch, time.time() - step_time, float(loss)))
 
-    ## adversarial learning (G, D)
-    n_step_epoch = round(n_epoch // batch_size)
+    # adversarial learning (G, D)
+    n_step_epoch = round(train_ds_img_nums // batch_size)
     for epoch in range(n_epoch):
-        for step, (lr_patchs, hr_patchs) in enumerate(train_ds):
-            if lr_patchs.shape[0] != batch_size: # if the remaining data in this epoch < batch_size
-                break
+        for step, (lr_patch, hr_patch) in enumerate(train_ds):
             step_time = time.time()
-            with tf.GradientTape(persistent=True) as tape:
-                fake_patchs = G(lr_patchs)
-                logits_fake = D(fake_patchs)
-                logits_real = D(hr_patchs)
-                feature_fake = VGG((fake_patchs+1)/2.) # the pre-trained VGG uses the input range of [0, 1]
-                feature_real = VGG((hr_patchs+1)/2.)
-                d_loss1 = tl.cost.sigmoid_cross_entropy(logits_real, tf.ones_like(logits_real))
-                d_loss2 = tl.cost.sigmoid_cross_entropy(logits_fake, tf.zeros_like(logits_fake))
-                d_loss = d_loss1 + d_loss2
-                g_gan_loss = 1e-3 * tl.cost.sigmoid_cross_entropy(logits_fake, tf.ones_like(logits_fake))
-                mse_loss = tl.cost.mean_squared_error(fake_patchs, hr_patchs, is_mean=True)
-                vgg_loss = 2e-6 * tl.cost.mean_squared_error(feature_fake, feature_real, is_mean=True)
-                g_loss = mse_loss + vgg_loss + g_gan_loss
-            grad = tape.gradient(g_loss, G.trainable_weights)
-            g_optimizer.apply_gradients(zip(grad, G.trainable_weights))
-            grad = tape.gradient(d_loss, D.trainable_weights)
-            d_optimizer.apply_gradients(zip(grad, D.trainable_weights))
-            print("Epoch: [{}/{}] step: [{}/{}] time: {:.3f}s, g_loss(mse:{:.3f}, vgg:{:.3f}, adv:{:.3f}) d_loss: {:.3f}".format(
-                epoch, n_epoch_init, step, n_step_epoch, time.time() - step_time, mse_loss, vgg_loss, g_gan_loss, d_loss))
-
-        # update the learning rate
-        if epoch != 0 and (epoch % decay_every == 0):
-            new_lr_decay = lr_decay**(epoch // decay_every)
-            lr_v.assign(lr_init * new_lr_decay)
-            log = " ** new learning rate: %f (for GAN)" % (lr_init * new_lr_decay)
-            print(log)
+            loss_g = trainforG(lr_patch, hr_patch)
+            loss_d = trainforD(lr_patch, hr_patch)
+            print(
+                "Epoch: [{}/{}] step: [{}/{}] time: {:.3f}s, g_loss:{:.3f}, d_loss: {:.3f}".format(
+                    epoch, n_epoch, step, n_step_epoch, time.time() - step_time, float(loss_g), float(loss_d)))
+        # dynamic learning rate update
+        lr_v.step()
 
         if (epoch != 0) and (epoch % 10 == 0):
-            tl.vis.save_images(fake_patchs.numpy(), [2, 4], os.path.join(save_dir, 'train_g_{}.png'.format(epoch)))
-            G.save_weights(os.path.join(checkpoint_dir, 'g.h5'))
-            D.save_weights(os.path.join(checkpoint_dir, 'd.h5'))
+            G.save_weights(os.path.join(checkpoint_dir, 'g.npz'), format='npz_dict')
+            D.save_weights(os.path.join(checkpoint_dir, 'd.npz'), format='npz_dict')
 
 def evaluate():
     ###====================== PRE-LOAD DATA ===========================###
-    # train_hr_img_list = sorted(tl.files.load_file_list(path=config.TRAIN.hr_img_path, regx='.*.png', printable=False))
-    # train_lr_img_list = sorted(tl.files.load_file_list(path=config.TRAIN.lr_img_path, regx='.*.png', printable=False))
-    valid_hr_img_list = sorted(tl.files.load_file_list(path=config.VALID.hr_img_path, regx='.*.png', printable=False))
-    valid_lr_img_list = sorted(tl.files.load_file_list(path=config.VALID.lr_img_path, regx='.*.png', printable=False))
-
-    ## if your machine have enough memory, please pre-load the whole train set.
-    # train_hr_imgs = tl.vis.read_images(train_hr_img_list, path=config.TRAIN.hr_img_path, n_threads=32)
-    # for im in train_hr_imgs:
-    #     print(im.shape)
-    valid_lr_imgs = tl.vis.read_images(valid_lr_img_list, path=config.VALID.lr_img_path, n_threads=32)
-    # for im in valid_lr_imgs:
-    #     print(im.shape)
-    valid_hr_imgs = tl.vis.read_images(valid_hr_img_list, path=config.VALID.hr_img_path, n_threads=32)
-    # for im in valid_hr_imgs:
-    #     print(im.shape)
-
-    ###========================== DEFINE MODEL ============================###
-    imid = 64  # 0: 企鹅  81: 蝴蝶 53: 鸟  64: 古堡
-    valid_lr_img = valid_lr_imgs[imid]
+    valid_hr_imgs = tlx.vision.load_images(path=config.VALID.hr_img_path )
+    ###========================LOAD WEIGHTS ============================###
+    G.load_weights(os.path.join(checkpoint_dir, 'g.npz'), format='npz_dict')
+    G.set_eval()
+    imid = 0  # 0: 企鹅  81: 蝴蝶 53: 鸟  64: 古堡
     valid_hr_img = valid_hr_imgs[imid]
-    # valid_lr_img = get_imgs_fn('test.png', 'data2017/')  # if you want to test your own image
-    valid_lr_img = (valid_lr_img / 127.5) - 1  # rescale to ［－1, 1]
-    # print(valid_lr_img.min(), valid_lr_img.max())
+    valid_lr_img = np.asarray(valid_hr_img)
+    hr_size1 = [valid_lr_img.shape[0], valid_lr_img.shape[1]]
+    valid_lr_img = cv2.resize(valid_lr_img, dsize=(hr_size1[1] // 4, hr_size1[0] // 4))
+    valid_lr_img_tensor = (valid_lr_img / 127.5) - 1  # rescale to ［－1, 1]
 
-    G = get_G([1, None, None, 3])
-    G.load_weights(os.path.join(checkpoint_dir, 'g.h5'))
-    G.eval()
 
-    valid_lr_img = np.asarray(valid_lr_img, dtype=np.float32)
-    valid_lr_img = valid_lr_img[np.newaxis,:,:,:]
-    size = [valid_lr_img.shape[1], valid_lr_img.shape[2]]
+    valid_lr_img_tensor = np.asarray(valid_lr_img_tensor, dtype=np.float32)
+    valid_lr_img_tensor = valid_lr_img_tensor[np.newaxis, :, :, :]
+    valid_lr_img_tensor= tlx.ops.convert_to_tensor(valid_lr_img_tensor)
+    size = [valid_lr_img.shape[0], valid_lr_img.shape[1]]
 
-    out = G(valid_lr_img).numpy()
-
+    out = tlx.ops.convert_to_numpy(G(valid_lr_img_tensor))
+    out = np.asarray((out + 1) * 127.5, dtype=np.uint8)
     print("LR size: %s /  generated HR size: %s" % (size, out.shape))  # LR size: (339, 510, 3) /  gen HR size: (1, 1356, 2040, 3)
     print("[*] save images")
-    tl.vis.save_image(out[0], os.path.join(save_dir, 'valid_gen.png'))
-    tl.vis.save_image(valid_lr_img[0], os.path.join(save_dir, 'valid_lr.png'))
-    tl.vis.save_image(valid_hr_img, os.path.join(save_dir, 'valid_hr.png'))
-
-    out_bicu = scipy.misc.imresize(valid_lr_img[0], [size[0] * 4, size[1] * 4], interp='bicubic', mode=None)
-    tl.vis.save_image(out_bicu, os.path.join(save_dir, 'valid_bicubic.png'))
+    tlx.vision.save_image(out[0], file_name='valid_gen.png', path=save_dir)
+    tlx.vision.save_image(valid_lr_img, file_name='valid_lr.png', path=save_dir)
+    tlx.vision.save_image(valid_hr_img, file_name='valid_hr.png', path=save_dir)
+    out_bicu = cv2.resize(valid_lr_img, dsize = [size[1] * 4, size[0] * 4], interpolation = cv2.INTER_CUBIC)
+    tlx.vision.save_image(out_bicu, file_name='valid_hr_cubic.png', path=save_dir)
 
 
 if __name__ == '__main__':
     import argparse
+
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--mode', type=str, default='srgan', help='srgan, evaluate')
+    parser.add_argument('--mode', type=str, default='train', help='train, eval')
 
     args = parser.parse_args()
 
-    tl.global_flag['mode'] = args.mode
+    tlx.global_flag['mode'] = args.mode
 
-    if tl.global_flag['mode'] == 'srgan':
+    if tlx.global_flag['mode'] == 'train':
         train()
-    elif tl.global_flag['mode'] == 'evaluate':
+    elif tlx.global_flag['mode'] == 'eval':
         evaluate()
     else:
         raise Exception("Unknow --mode")

@@ -1,4 +1,4 @@
-tensorlayer>=2.0.0
-tensorflow>=2.0.0b1
-numpy==1.16.1
+git+https://github.com/tensorlayer/tensorlayerx.git
+numpy>=1.16.1
 easydict==1.9
+opencv-python>=4.5.1.48
