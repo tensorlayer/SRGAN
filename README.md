@@ -61,7 +61,7 @@ srgan/
 python train.py
 ```
 
-🔥Just modify a line of code in **train.py**, easily change to any framework!
+🔥Modify a line of code in **train.py**, easily switch to any framework!
 
 ```python
 import os
