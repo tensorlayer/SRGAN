@@ -31,6 +31,11 @@ TensorLayerX Implementation of ["Photo-Realistic Single Image Super-Resolution U
 ### Run
 
 🔥🔥🔥🔥🔥🔥 You need install [TensorLayerX](https://github.com/tensorlayer/TensorLayerX#installation) at first!
+🔥🔥🔥🔥🔥🔥 Please install TensorLayerX via source
+
+```bash
+pip install git+https://github.com/tensorlayer/tensorlayerx.git 
+```
 
 #### Train
 - Set your image folder in `config.py`, if you download [DIV2K - bicubic downscaling x4 competition](http://www.vision.ee.ethz.ch/ntire17/) dataset, you don't need to change it. 
