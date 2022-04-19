@@ -7,12 +7,12 @@
 
 TensorLayerX Implementation of ["Photo-Realistic Single Image Super-Resolution Using a Generative Adversarial Network"](https://arxiv.org/abs/1609.04802)
 
-<a href="https://tensorlayerx.readthedocs.io/en/latest/">
+<a href="https://github.com/tensorlayer/TensorLayerX">
 <div align="center">
 	<img src="img/model.jpeg" width="80%" height="10%"/>
 </div>
 </a>
-<a href="https://tensorlayerx.readthedocs.io/en/latest/">
+<a href="https://github.com/tensorlayer/TensorLayerX">
 <div align="center">
 	<img src="img/SRGAN_Result3.png" width="80%" height="50%"/>
 </div>
