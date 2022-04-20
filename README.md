@@ -1,10 +1,11 @@
 ## Super Resolution Examples
 
-🔥🔥🔥🔥🔥🔥**Now, we update this script under [TensorLayerX](https://github.com/tensorlayer/TensorLayerX)! 
-TensorLayerX: A Unified Deep Learning and Reinforcement Learning Framework for All Hardwares, Backends and OS.
+🔥🔥🔥🔥🔥🔥**Now, we update this script under [TensorLayerX](https://github.com/tensorlayer/TensorLayerX)! **
+
+**TensorLayerX: A Unified Deep Learning and Reinforcement Learning Framework for All Hardwares, Backends and OS.**
 
 
-For earlier version, please check [srgan release](https://github.com/tensorlayer/srgan/releases) and [tensorlayer](https://github.com/tensorlayer/TensorLayer).**
+For earlier version, please check [srgan release](https://github.com/tensorlayer/srgan/releases) and [tensorlayer](https://github.com/tensorlayer/TensorLayer).
 
 
 ### SRGAN Architecture
