@@ -1,6 +1,6 @@
 ## Super Resolution Examples
 
-🔥🔥🔥🔥🔥🔥**Now, we update this script under [TensorLayerX](https://github.com/tensorlayer/TensorLayerX)! **
+🔥🔥🔥🔥🔥🔥**Now, we update this script under [TensorLayerX]**(https://github.com/tensorlayer/TensorLayerX)! 
 
 **TensorLayerX: A Unified Deep Learning and Reinforcement Learning Framework for All Hardwares, Backends and OS.**
 
