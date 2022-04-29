@@ -1,6 +1,6 @@
 from tensorlayerx.nn import Module
 import tensorlayerx as tlx
-from tensorlayerx.nn import Conv2d, BatchNorm2d,Elementwise,SubpixelConv2d, SequentialLayer, UpSampling2d, Flatten
+from tensorlayerx.nn import Conv2d, BatchNorm2d,Elementwise,SubpixelConv2d, UpSampling2d, Flatten, Sequential
 from tensorlayerx.nn import Linear, MaxPool2d
 
 W_init = tlx.initializers.TruncatedNormal(stddev=0.02)
@@ -43,7 +43,7 @@ class SRGAN_g(Module):
         layer_list = []
         for i in range(16):
             layer_list.append(ResidualBlock())
-        return SequentialLayer(layer_list)
+        return Sequential(layer_list)
 
     def forward(self, x):
         x = self.conv1(x)
@@ -91,7 +91,7 @@ class SRGAN_g2(Module):
         layer_list = []
         for i in range(16):
             layer_list.append(ResidualBlock())
-        return SequentialLayer(layer_list)
+        return Sequential(layer_list)
 
     def forward(self, x):
         x = self.conv1(x)
@@ -115,23 +115,23 @@ class SRGAN_d2(Module):
     """
     def __init__(self, ):
         super(SRGAN_d2, self).__init__()
-        self.conv1 = Conv2d(out_channels=64, kernel_size=(3,3), stride=(1,1), act=tlx.LeakyReLU(alpha=0.2), padding='SAME', W_init=W_init)
-        self.conv2 = Conv2d(out_channels=64, kernel_size=(3,3), stride=(2,2), act=tlx.LeakyReLU(alpha=0.2), padding='SAME', W_init=W_init, b_init=None)
+        self.conv1 = Conv2d(out_channels=64, kernel_size=(3,3), stride=(1,1), act=tlx.LeakyReLU(negative_slope=0.2), padding='SAME', W_init=W_init)
+        self.conv2 = Conv2d(out_channels=64, kernel_size=(3,3), stride=(2,2), act=tlx.LeakyReLU(negative_slope=0.2), padding='SAME', W_init=W_init, b_init=None)
         self.bn1 = BatchNorm2d( gamma_init=G_init)
-        self.conv3 = Conv2d(out_channels=128, kernel_size=(3,3), stride=(1,1), act=tlx.LeakyReLU(alpha=0.2), padding='SAME', W_init=W_init, b_init=None)
+        self.conv3 = Conv2d(out_channels=128, kernel_size=(3,3), stride=(1,1), act=tlx.LeakyReLU(negative_slope=0.2), padding='SAME', W_init=W_init, b_init=None)
         self.bn2 = BatchNorm2d( gamma_init=G_init)
-        self.conv4 = Conv2d(out_channels=128, kernel_size=(3,3), stride=(2,2), act=tlx.LeakyReLU(alpha=0.2), padding='SAME', W_init=W_init, b_init=None)
+        self.conv4 = Conv2d(out_channels=128, kernel_size=(3,3), stride=(2,2), act=tlx.LeakyReLU(negative_slope=0.2), padding='SAME', W_init=W_init, b_init=None)
         self.bn3 = BatchNorm2d(gamma_init=G_init)
-        self.conv5 = Conv2d(out_channels=256, kernel_size=(3,3), stride=(1,1), act=tlx.LeakyReLU(alpha=0.2), padding='SAME', W_init=W_init, b_init=None)
+        self.conv5 = Conv2d(out_channels=256, kernel_size=(3,3), stride=(1,1), act=tlx.LeakyReLU(negative_slope=0.2), padding='SAME', W_init=W_init, b_init=None)
         self.bn4 = BatchNorm2d( gamma_init=G_init)
-        self.conv6 = Conv2d(out_channels=256, kernel_size=(3,3), stride=(2,2), act=tlx.LeakyReLU(alpha=0.2), padding='SAME', W_init=W_init, b_init=None)
+        self.conv6 = Conv2d(out_channels=256, kernel_size=(3,3), stride=(2,2), act=tlx.LeakyReLU(negative_slope=0.2), padding='SAME', W_init=W_init, b_init=None)
         self.bn5 = BatchNorm2d( gamma_init=G_init)
-        self.conv7 = Conv2d(out_channels=512, kernel_size=(3,3), stride=(1,1), act=tlx.LeakyReLU(alpha=0.2), padding='SAME', W_init=W_init, b_init=None)
+        self.conv7 = Conv2d(out_channels=512, kernel_size=(3,3), stride=(1,1), act=tlx.LeakyReLU(negative_slope=0.2), padding='SAME', W_init=W_init, b_init=None)
         self.bn6 = BatchNorm2d( gamma_init=G_init)
-        self.conv8 = Conv2d(out_channels=512, kernel_size=(3,3), stride=(2,2), act=tlx.LeakyReLU(alpha=0.2), padding='SAME', W_init=W_init, b_init=None)
+        self.conv8 = Conv2d(out_channels=512, kernel_size=(3,3), stride=(2,2), act=tlx.LeakyReLU(negative_slope=0.2), padding='SAME', W_init=W_init, b_init=None)
         self.bn7 = BatchNorm2d( gamma_init=G_init)
         self.flat = Flatten()
-        self.dense1 = Linear(out_features=1024, act=tlx.LeakyReLU(alpha=0.2))
+        self.dense1 = Linear(out_features=1024, act=tlx.LeakyReLU(negative_slope=0.2))
         self.dense2 = Linear(out_features=1)
 
     def forward(self, x):

@@ -34,7 +34,7 @@ import numpy as np
 import tensorlayerx as tlx
 from tensorlayerx import logging
 from tensorlayerx.files import assign_weights, maybe_download_and_extract
-from tensorlayerx.nn import (BatchNorm, Conv2d, Linear, Flatten, Input, SequentialLayer, MaxPool2d)
+from tensorlayerx.nn import (BatchNorm, Conv2d, Linear, Flatten, Input, Sequential, MaxPool2d)
 from tensorlayerx.nn import Module
 
 __all__ = [
@@ -150,7 +150,7 @@ def make_layers(config, batch_norm=False, end_with='outputs'):
                 is_end = True
         if is_end:
             break
-    return SequentialLayer(layer_list)
+    return Sequential(layer_list)
 
 def restore_model(model, layer_type):
     logging.info("Restore pre-trained weights")
