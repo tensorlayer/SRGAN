@@ -1,18 +1,20 @@
 import os
-os.environ['TL_BACKEND'] = 'tensorflow' # Just modify this line, easily change to any framework! PyTorch will coming soon!
+# os.environ['TL_BACKEND'] = 'tensorflow' # Just modify this line, easily switch to any framework! PyTorch will coming soon!
 # os.environ['TL_BACKEND'] = 'mindspore'
 # os.environ['TL_BACKEND'] = 'paddle'
+os.environ['TL_BACKEND'] = 'torch'
 import time
 import numpy as np
 import tensorlayerx as tlx
 from tensorlayerx.dataflow import Dataset, DataLoader
 from srgan import SRGAN_g, SRGAN_d
 from config import config
-from tensorlayerx.vision.transforms import Compose, RandomCrop, Normalize, RandomFlipHorizontal, Resize
+from tensorlayerx.vision.transforms import Compose, RandomCrop, Normalize, RandomFlipHorizontal, Resize, HWC2CHW
 import vgg
 from tensorlayerx.model import TrainOneStep
 from tensorlayerx.nn import Module
 import cv2
+tlx.set_device('GPU')
 
 ###====================== HYPER-PARAMETERS ===========================###
 batch_size = 8
@@ -28,14 +30,16 @@ hr_transform = Compose([
     RandomCrop(size=(384, 384)),
     RandomFlipHorizontal(),
 ])
-nor = Normalize(mean=(127.5), std=(127.5), data_format='HWC')
+nor = Compose([Normalize(mean=(127.5), std=(127.5), data_format='HWC'),
+              HWC2CHW()])
 lr_transform = Resize(size=(96, 96))
 
+train_hr_imgs = tlx.vision.load_images(path=config.TRAIN.hr_img_path, n_threads = 32)
 
 class TrainData(Dataset):
 
     def __init__(self, hr_trans=hr_transform, lr_trans=lr_transform):
-        self.train_hr_imgs = tlx.vision.load_images(path=config.TRAIN.hr_img_path)
+        self.train_hr_imgs = train_hr_imgs
         self.hr_trans = hr_trans
         self.lr_trans = lr_trans
 
@@ -104,12 +108,12 @@ class WithLoss_G(Module):
 
 G = SRGAN_g()
 D = SRGAN_d()
-VGG = vgg.VGG19(pretrained=False, end_with='pool4', mode='dynamic')
+VGG = vgg.VGG19(pretrained=True, end_with='pool4', mode='dynamic')
 # automatic init layers weights shape with input tensor.
 # Calculating and filling 'in_channels' of each layer is a very troublesome thing.
 # So, just use 'init_build' with input shape. 'in_channels' of each layer will be automaticlly set.
-G.init_build(tlx.nn.Input(shape=(8, 96, 96, 3)))
-D.init_build(tlx.nn.Input(shape=(8, 384, 384, 3)))
+G.init_build(tlx.nn.Input(shape=(8, 3, 96, 96)))
+D.init_build(tlx.nn.Input(shape=(8, 3, 384, 384)))
 
 
 def train():
@@ -176,15 +180,17 @@ def evaluate():
 
 
     valid_lr_img_tensor = np.asarray(valid_lr_img_tensor, dtype=np.float32)
+    valid_lr_img_tensor = np.transpose(valid_lr_img_tensor,axes=[2, 0, 1])
     valid_lr_img_tensor = valid_lr_img_tensor[np.newaxis, :, :, :]
     valid_lr_img_tensor= tlx.ops.convert_to_tensor(valid_lr_img_tensor)
     size = [valid_lr_img.shape[0], valid_lr_img.shape[1]]
 
     out = tlx.ops.convert_to_numpy(G(valid_lr_img_tensor))
     out = np.asarray((out + 1) * 127.5, dtype=np.uint8)
+    out = np.transpose(out[0], axes=[1, 2, 0])
     print("LR size: %s /  generated HR size: %s" % (size, out.shape))  # LR size: (339, 510, 3) /  gen HR size: (1, 1356, 2040, 3)
     print("[*] save images")
-    tlx.vision.save_image(out[0], file_name='valid_gen.png', path=save_dir)
+    tlx.vision.save_image(out, file_name='valid_gen.png', path=save_dir)
     tlx.vision.save_image(valid_lr_img, file_name='valid_lr.png', path=save_dir)
     tlx.vision.save_image(valid_hr_img, file_name='valid_hr.png', path=save_dir)
     out_bicu = cv2.resize(valid_lr_img, dsize = [size[1] * 4, size[0] * 4], interpolation = cv2.INTER_CUBIC)
