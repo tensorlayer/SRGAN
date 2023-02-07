@@ -1,16 +1,14 @@
 ## Super Resolution Examples
 
-🔥🔥🔥🔥🔥🔥**Now, we update this script under** [TensorLayerX](https://github.com/tensorlayer/TensorLayerX)! 
+- Implementation of ["Photo-Realistic Single Image Super-Resolution Using a Generative Adversarial Network"](https://arxiv.org/abs/1609.04802)
 
-**TensorLayerX: A Unified Deep Learning and Reinforcement Learning Framework for All Hardwares, Backends and OS.**
+- For earlier version, please check [srgan release](https://github.com/tensorlayer/srgan/releases) and [tensorlayer](https://github.com/tensorlayer/TensorLayer).
 
-
-For earlier version, please check [srgan release](https://github.com/tensorlayer/srgan/releases) and [tensorlayer](https://github.com/tensorlayer/TensorLayer).
+- For more computer vision applications, check [TLXCV](https://github.com/tensorlayer/TLXCV)
 
 
 ### SRGAN Architecture
 
-TensorLayerX Implementation of ["Photo-Realistic Single Image Super-Resolution Using a Generative Adversarial Network"](https://arxiv.org/abs/1609.04802)
 
 <a href="https://github.com/tensorlayer/TensorLayerX">
 <div align="center">
