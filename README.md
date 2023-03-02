@@ -79,6 +79,7 @@ import os
 os.environ['TL_BACKEND'] = 'tensorflow'
 # os.environ['TL_BACKEND'] = 'mindspore'
 # os.environ['TL_BACKEND'] = 'paddle'
+# os.environ['TL_BACKEND'] = 'pytorch'
 ```
 🚧 We will support PyTorch as Backend soon.
 
